@@ -8,6 +8,7 @@ using Order.API.Dtos.Dashboard;
 using Order.API.Dtos.Pagination;
 using Order.API.Dtos.Supplier;
 using Order.API.Helpers;
+using Order.Application;
 using Order.Domain.Interfaces;
 using Order.Domain.Models;
 using Order.Domain.Services;
@@ -127,7 +128,7 @@ namespace Order.API.Controllers
 
         [HttpPut("activateBuyer/{id}")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<BuyerToReturnDto>> ActivateBuyer(int id)
+        public async Task<ActionResult<BuyerToReturnDto>> ActivateBuyer(int id, [FromServices] NotificationService notificationService)
         {
             try
             {
@@ -151,6 +152,16 @@ namespace Order.API.Controllers
                 _buyerRepo.Update(buyer);
                 await _buyerRepo.SaveChangesAsync();
 
+                // إرسال إشعار للـ Buyer
+                if (!string.IsNullOrWhiteSpace(buyer.DeviceToken))
+                {
+                    await notificationService.SendNotificationAsync(
+                        buyer.DeviceToken,
+                        "Account Activated 🎉",
+                        "Your account has been activated successfully. Welcome!"
+                    );
+                }
+
                 var buyerToReturn = _mapper.Map<BuyerToReturnDto>(buyer);
                 _logger.LogInformation("Buyer with ID {BuyerId} activated successfully", id);
                 return Ok(new { message = "Account Activated Successfully", Data = buyerToReturn });
@@ -161,6 +172,7 @@ namespace Order.API.Controllers
                 return StatusCode(500, $"Error activating buyer: {ex.Message}");
             }
         }
+
         #endregion
 
 

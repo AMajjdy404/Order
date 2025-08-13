@@ -1,5 +1,7 @@
 ﻿using Order.API.Helpers;
+using Order.Application;
 using Order.Domain.Interfaces;
+using Order.Domain.Services;
 using Order.Infrastructure.Implementation;
 
 
@@ -11,6 +13,7 @@ namespace Order.API.Extensions
         {
             Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
             Services.AddScoped<IUnitOfWork, UnitOfWork>();
+            Services.AddScoped<INotificationService, NotificationService>();
             Services.AddScoped<DataSeeder>();
             Services.AddAutoMapper(typeof(MappingProfiles));
 

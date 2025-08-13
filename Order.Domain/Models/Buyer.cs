@@ -37,6 +37,7 @@ namespace Order.Domain.Models
         public string PropertyOutsideImagePath { get; set; }
         public bool IsActive { get; set; } = false;
         public decimal WalletBalance { get; set; } = 0;
+        public string? DeviceToken { get; set; }
 
     }
 }

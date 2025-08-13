@@ -18,6 +18,7 @@ namespace Order.Domain.Models
     {
         public int Id { get; set; }
         public int SupplierId { get; set; }
+        public int MyOrderId { get; set; }
         public decimal TotalAmount { get; set; }
         public DateOnly DeliveryDate { get; set; }
         public string PaymentMethod { get; set; }
@@ -30,6 +31,7 @@ namespace Order.Domain.Models
         public string PropertyLocation { get; set; }
         public Supplier Supplier { get; set; }
         public List<SupplierOrderItem> Items { get; set; }
+        public decimal WalletPaymentAmount { get; set; }
     }
 
 

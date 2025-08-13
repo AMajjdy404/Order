@@ -20,6 +20,9 @@ namespace Order.Infrastructure.Data
         public DbSet<ReferralCode> ReferralCodes { get; set; }
         public DbSet<MyOrder> MyOrders { get; set; }
         public DbSet<SupplierOrderItem> SupplierOrderItems { get; set; }
+        public DbSet<SupplierPenalty> SupplierPenalties { get; set; }
+        public DbSet<ReturnOrderItem> ReturnOrders { get; set; }
+        public DbSet<SupplierStatement> SupplierStatements { get; set; }
 
         public OrderDbContext(DbContextOptions<OrderDbContext> options) :base(options)
         {

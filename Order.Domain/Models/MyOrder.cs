@@ -9,14 +9,14 @@ namespace Order.Domain.Models
     public class MyOrder
     {
         public int Id { get; set; }
-        public string ProductName { get; set; }
-        public int Quantity { get; set; }
-        public string SupplierName { get; set; }
         public DateOnly? DeliveryDate { get; set; }
         public DateOnly OrderDate { get; set; }
         public int? BuyerOrderId { get; set; }
         public int BuyerId { get; set; }
-        public int SupplierProductId { get; set; } // إضافة
-        public decimal UnitPrice { get; set; } // إضافة
+        public OrderStatus Status { get; set; }
+        public decimal TotalAmount { get; set; }
+
+        public List<MyOrderItem> Items { get; set; } = new List<MyOrderItem>();
     }
+
 }

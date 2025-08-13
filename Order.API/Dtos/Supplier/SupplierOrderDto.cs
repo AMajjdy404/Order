@@ -4,11 +4,15 @@ namespace Order.API.Dtos.Supplier
 {
     public class SupplierOrderDto
     {
-        public int SupplierOrderId { get; set; }
+        public int Id { get; set; }
+        public string BuyerName { get; set; }
+        public string BuyerPhone { get; set; }
+        public string PropertyName { get; set; }
+        public string PropertyAddress { get; set; }
+        public string PropertyLocation { get; set; }
         public decimal TotalAmount { get; set; }
-        public DateOnly DeliveryDate { get; set; }
-        public string PaymentMethod { get; set; }
-        public string Address { get; set; }
-        public List<OrderItemDetailsDto> OrderItems { get; set; }
+        public string DeliveryDate { get; set; } // formatted
+        public string Status { get; set; }
+        public List<SupplierOrderItemDto> Items { get; set; } = new();
     }
 }

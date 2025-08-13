@@ -20,11 +20,12 @@ namespace Order.Infrastructure.Data.Configurations
                    .HasForeignKey(mo => mo.BuyerOrderId)
                    .OnDelete(DeleteBehavior.SetNull);
 
-            builder.HasOne<SupplierProduct>()
-                   .WithMany()
-                   .HasForeignKey(mo => mo.SupplierProductId)
-                   .OnDelete(DeleteBehavior.Restrict);
+            builder.HasMany(mo => mo.Items)
+                   .WithOne()
+                   .HasForeignKey(moi => moi.MyOrderId)
+                   .OnDelete(DeleteBehavior.Cascade);
         }
     }
+
 
 }

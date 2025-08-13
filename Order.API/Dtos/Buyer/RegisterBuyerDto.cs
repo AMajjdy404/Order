@@ -25,5 +25,6 @@ namespace Order.API.Dtos.Buyer
         [Required]
         public IFormFile PropertyOutsideImage { get; set; }
         public string? ReferralCode { get; set; }
+        public string? DeviceToken { get; set; }
     }
 }

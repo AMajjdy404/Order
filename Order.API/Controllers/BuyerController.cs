@@ -37,7 +37,7 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<MyOrder> _myOrderRepo;
         private readonly IGenericRepository<ReferralCode> _referralCodeRepo;
         private readonly IUnitOfWork _unitOfWork;
-        private readonly OrderDbContext _context;
+        
 
         public BuyerController(
             IGenericRepository<Buyer> buyerRepo,
@@ -55,8 +55,8 @@ namespace Order.API.Controllers
              IGenericRepository<SupplierOrder> supplierOrderRepo,
              IGenericRepository<MyOrder> myOrderRepo,
              IGenericRepository<ReferralCode> referralCodeRepo,
-             IUnitOfWork unitOfWork,
-             OrderDbContext context
+             IUnitOfWork unitOfWork
+            
             )
         {
             _buyerRepo = buyerRepo;
@@ -74,7 +74,7 @@ namespace Order.API.Controllers
             _myOrderRepo = myOrderRepo;
             _referralCodeRepo = referralCodeRepo;
             _unitOfWork = unitOfWork;
-            _context = context;
+            
         }
 
         [HttpPost("register")]
@@ -640,21 +640,17 @@ namespace Order.API.Controllers
 
             try
             {
-                // التحقق من وجود المورد
                 var supplier = await _supplierRepo.GetByIdAsync(id);
                 if (supplier == null)
                     return NotFound(new { message = $"Supplier with ID {id} not found." });
 
-                // جلب SupplierProducts المرتبطة بالمورد مع بيانات المنتج
                 var supplierProducts = await _supplierProductRepo.GetAllAsync(
                     sp => sp.SupplierId == id,
                     sp => sp.Product
                 );
 
-                // تحويل SupplierProducts إلى SupplierProductDto
                 var mappedSupplierProducts = _mapper.Map<List<SupplierProductDto>>(supplierProducts);
 
-                // تطبيق Pagination
                 var totalItems = mappedSupplierProducts.Count;
                 var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
 
@@ -664,7 +660,6 @@ namespace Order.API.Controllers
                     .Take(pageSize)
                     .ToList();
 
-                // إنشاء الـ Response
                 var response = new PagedResponseDto<SupplierProductDto>
                 {
                     Items = pagedSupplierProducts,
@@ -684,6 +679,119 @@ namespace Order.API.Controllers
                 return StatusCode(500, $"Error retrieving supplier products: {ex.Message}");
             }
         }
+
+
+        [HttpGet("supplier/{id}/products/offers")]
+        [Authorize]
+        public async Task<ActionResult<PagedResponseDto<SupplierProductDto>>> GetSupplierOffers(
+        [FromRoute] int id,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
+        {
+            if (id <= 0)
+                return BadRequest(new { message = "Supplier ID must be greater than zero" });
+
+            if (page < 1 || pageSize < 1)
+                return BadRequest(new { message = "Page number and page size must be greater than zero" });
+
+            try
+            {
+                var supplier = await _supplierRepo.GetByIdAsync(id);
+                if (supplier == null)
+                    return NotFound(new { message = $"Supplier with ID {id} not found." });
+
+                var supplierProducts = await _supplierProductRepo.GetAllAsync(
+                    sp => sp.SupplierId == id && sp.PriceBefore.HasValue && sp.PriceBefore.Value != 0,
+                    sp => sp.Product
+                );
+
+                var mappedSupplierProducts = _mapper.Map<List<SupplierProductDto>>(supplierProducts);
+
+                var totalItems = mappedSupplierProducts.Count;
+                var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+
+                var pagedSupplierProducts = mappedSupplierProducts
+                    .OrderBy(sp => sp.Id)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                var response = new PagedResponseDto<SupplierProductDto>
+                {
+                    Items = pagedSupplierProducts,
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalItems = totalItems,
+                    TotalPages = totalPages
+                };
+
+                if (!pagedSupplierProducts.Any())
+                    return NotFound(new { message = $"No offers found for supplier with ID {id}." });
+
+                return Ok(new { message = "Supplier offers retrieved successfully", Data = response });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving supplier offers: {ex.Message}");
+            }
+        }
+
+
+        [HttpGet("supplier/{id}/products/normal")]
+        [Authorize]
+        public async Task<ActionResult<PagedResponseDto<SupplierProductDto>>> GetSupplierNormalProducts(
+        [FromRoute] int id,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
+        {
+            if (id <= 0)
+                return BadRequest(new { message = "Supplier ID must be greater than zero" });
+
+            if (page < 1 || pageSize < 1)
+                return BadRequest(new { message = "Page number and page size must be greater than zero" });
+
+            try
+            {
+                var supplier = await _supplierRepo.GetByIdAsync(id);
+                if (supplier == null)
+                    return NotFound(new { message = $"Supplier with ID {id} not found." });
+
+                var supplierProducts = await _supplierProductRepo.GetAllAsync(
+                    sp => sp.SupplierId == id && (!sp.PriceBefore.HasValue || sp.PriceBefore.Value == 0),
+                    sp => sp.Product
+                );
+
+                var mappedSupplierProducts = _mapper.Map<List<SupplierProductDto>>(supplierProducts);
+
+                var totalItems = mappedSupplierProducts.Count;
+                var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+
+                var pagedSupplierProducts = mappedSupplierProducts
+                    .OrderBy(sp => sp.Id)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                var response = new PagedResponseDto<SupplierProductDto>
+                {
+                    Items = pagedSupplierProducts,
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalItems = totalItems,
+                    TotalPages = totalPages
+                };
+
+                if (!pagedSupplierProducts.Any())
+                    return NotFound(new { message = $"No normal products found for supplier with ID {id}." });
+
+                return Ok(new { message = "Supplier normal products retrieved successfully", Data = response });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving supplier products: {ex.Message}");
+            }
+        }
+
 
         [HttpPost("addToCart")]
         [Authorize]
@@ -806,6 +914,115 @@ namespace Order.API.Controllers
             }
         }
 
+        [HttpDelete("clearCart")]
+        [Authorize]
+        public async Task<IActionResult> ClearCart()
+        {
+            try
+            {
+                var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(buyerId))
+                    return Unauthorized("Buyer ID not found in token.");
+
+                // نجيب الطلب اللي هو cart (أول واحد مثلا أو اللي لسه مش confirmed)
+                var buyerOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
+                    bo => bo.BuyerId == int.Parse(buyerId),
+                    query => query.Include(bo => bo.OrderItems)
+                );
+
+                if (buyerOrder == null)
+                    return NotFound("Cart not found.");
+
+                if (buyerOrder.OrderItems == null || !buyerOrder.OrderItems.Any())
+                    return BadRequest("Cart is already empty.");
+
+                // نحذف كل العناصر
+                foreach (var item in buyerOrder.OrderItems.ToList())
+                {
+                    _orderItemRepo.Delete(item);
+                }
+
+                // نحدث الإجمالي
+                buyerOrder.TotalAmount = 0;
+                _buyerOrderRepo.Update(buyerOrder);
+
+                await _orderItemRepo.SaveChangesAsync();
+                await _buyerOrderRepo.SaveChangesAsync();
+
+                return Ok(new { message = "Cart cleared successfully." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error clearing cart.");
+                return StatusCode(500, $"Error clearing cart: {ex.Message}");
+            }
+        }
+
+
+        [HttpPost("cart/update-quantity")]
+        [Authorize]
+        public async Task<IActionResult> UpdateCartQuantity(int orderItemId, string action)
+        {
+            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(buyerId))
+                return Unauthorized("Buyer ID not found in token.");
+
+            var orderItem = await _orderItemRepo.GetFirstOrDefaultAsync(
+                oi => oi.Id == orderItemId && oi.BuyerOrder.BuyerId == int.Parse(buyerId),
+                query => query
+                    .Include(oi => oi.SupplierProduct)
+            );
+
+            if (orderItem == null)
+                return NotFound("Product not found in cart.");
+
+            int maxOrderLimit = orderItem.SupplierProduct.MaxOrderLimit;
+            int availableStock = orderItem.SupplierProduct.Quantity;
+
+            if (action == "plus")
+            {
+                if (orderItem.Quantity >= maxOrderLimit)
+                    return BadRequest($"You have reached the maximum quantity ({maxOrderLimit}) for this product.");
+
+                if (orderItem.Quantity >= availableStock)
+                    return BadRequest($"Only {availableStock} items are available in stock.");
+
+                orderItem.Quantity += 1;
+            }
+            else if (action == "minus")
+            {
+                if (orderItem.Quantity <= 1)
+                    return BadRequest("Minimum quantity is 1.");
+
+                orderItem.Quantity -= 1;
+            }
+            else
+            {
+                return BadRequest("Invalid action. Use 'plus' or 'minus'.");
+            }
+
+            var buyerOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
+                bo => bo.Id == orderItem.BuyerOrderId,
+                query => query.Include(o => o.OrderItems)
+            );
+
+            if (buyerOrder != null)
+            {
+                buyerOrder.TotalAmount = buyerOrder.OrderItems.Sum(oi => oi.Quantity * oi.UnitPrice);
+                _buyerOrderRepo.Update(buyerOrder);
+            }
+
+            _orderItemRepo.Update(orderItem);
+
+            await _buyerOrderRepo.SaveChangesAsync();
+            await _orderItemRepo.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Quantity updated successfully",
+                quantity = orderItem.Quantity
+            });
+        }
 
         [HttpGet("cart")]
         [Authorize]
@@ -827,7 +1044,7 @@ namespace Order.API.Controllers
             );
 
 
-            if (pendingOrder == null)
+            if (pendingOrder == null || pendingOrder.OrderItems == null || !pendingOrder.OrderItems.Any())
                 return NotFound("No pending order found.");
 
             var cartSuppliers = pendingOrder.OrderItems
@@ -919,25 +1136,33 @@ namespace Order.API.Controllers
             var remainingAmount = totalOrderAmount - walletAmount;
 
             var orderDate = DateOnly.FromDateTime(currentDateTime);
+            var myOrder = new MyOrder
+            {
+                Status = OrderStatus.Pending,
+                DeliveryDate = confirmDto.DeliveryDate,
+                OrderDate = orderDate,
+                BuyerOrderId = pendingOrder.Id,
+                BuyerId = int.Parse(buyerId),
+                TotalAmount = totalOrderAmount
+            };
+
             foreach (var orderItem in pendingOrder.OrderItems)
             {
-                var myOrder = new MyOrder
+                myOrder.Items.Add(new MyOrderItem
                 {
+                    SupplierProductId = orderItem.SupplierProductId,
                     ProductName = orderItem.SupplierProduct?.Product?.Name ?? "Unknown Product",
                     Quantity = orderItem.Quantity,
-                    SupplierName = orderItem.SupplierProduct?.Supplier?.Name ?? "Unknown Supplier",
-                    DeliveryDate = confirmDto.DeliveryDate,
-                    OrderDate = orderDate,
-                    BuyerOrderId = pendingOrder.Id,
-                    BuyerId = int.Parse(buyerId),
-                    SupplierProductId = orderItem.SupplierProductId,
-                    UnitPrice = orderItem.UnitPrice
-                };
-                await _myOrderRepo.AddAsync(myOrder);
+                    UnitPrice = orderItem.UnitPrice,
+                    SupplierName = orderItem.SupplierProduct?.Supplier?.Name ?? "Unknown Supplier"
+                });
 
                 orderItem.SupplierProduct.Quantity -= orderItem.Quantity;
                 _supplierProductRepo.Update(orderItem.SupplierProduct);
             }
+
+            await _myOrderRepo.AddAsync(myOrder);
+            await _myOrderRepo.SaveChangesAsync();
 
             foreach (var group in supplierGroups)
             {
@@ -947,10 +1172,12 @@ namespace Order.API.Controllers
                 if (totalPrice < group.Key.MinimumOrderPrice || totalItems < group.Key.MinimumOrderItems)
                     return BadRequest($"Order for supplier {group.Key.Name} does not meet minimum requirements.");
 
+                var walletPaymentAmount = walletAmount > 0 ? (totalPrice * walletAmount / totalOrderAmount) : 0;
                 var supplierOrder = new SupplierOrder
                 {
                     SupplierId = group.Key.Id,
-                    TotalAmount = totalPrice - (totalPrice * walletAmount / totalOrderAmount),
+                    MyOrderId = myOrder.Id,
+                    TotalAmount = totalPrice - walletPaymentAmount,
                     DeliveryDate = confirmDto.DeliveryDate,
                     PaymentMethod = walletAmount > 0 ? "Wallet" : "Cash",
                     Status = OrderStatus.Pending,
@@ -965,15 +1192,15 @@ namespace Order.API.Controllers
                         ProductName = oi.SupplierProduct.Product.Name,
                         Quantity = oi.Quantity,
                         UnitPrice = oi.UnitPrice
-                    }).ToList()
+                    }).ToList(),
+                    WalletPaymentAmount = walletPaymentAmount
                 };
 
                 await _supplierOrderRepo.AddAsync(supplierOrder);
 
                 if (walletAmount > 0)
                 {
-                    var supplierWalletAmount = (totalPrice * walletAmount) / totalOrderAmount;
-                    group.Key.WalletBalance += supplierWalletAmount;
+                    group.Key.WalletBalance += walletPaymentAmount;
                     _supplierRepo.Update(group.Key);
                 }
             }
@@ -986,6 +1213,8 @@ namespace Order.API.Controllers
 
             _buyerOrderRepo.Delete(pendingOrder);
             await _buyerOrderRepo.SaveChangesAsync();
+            
+            await _supplierOrderRepo.SaveChangesAsync();
 
             return Ok(new
             {
@@ -993,11 +1222,6 @@ namespace Order.API.Controllers
                 remainingAmount = remainingAmount
             });
         }
-
-
-
-
-
 
         [HttpGet("myOrders")]
         [Authorize]
@@ -1008,35 +1232,37 @@ namespace Order.API.Controllers
                 return Unauthorized("Buyer ID not found in token.");
 
             if (pageNumber < 1) pageNumber = 1;
-            if (pageSize < 1 || pageSize > 100) pageSize = 10; 
+            if (pageSize < 1 || pageSize > 100) pageSize = 10;
 
-            var myOrders = await _myOrderRepo.GetAllQueryableAsync(o => o.BuyerId == int.Parse(buyerId));
+            var myOrdersQuery = (await _myOrderRepo.GetAllAsync(mo => mo.BuyerId == int.Parse(buyerId)))
+                                .AsQueryable()
+                                .Include(mo => mo.Items);
 
-            if (!myOrders.Any())
+            var totalCount = await myOrdersQuery.CountAsync();
+            if (totalCount == 0)
                 return NotFound("No orders found for this buyer.");
 
-            var totalCount = myOrders.Count();
-
-            var orderGroups = myOrders
-                .GroupBy(mo => mo.BuyerOrderId)
-                .Select(g => new
+            var orders = await myOrdersQuery
+                .OrderByDescending(mo => mo.OrderDate)
+                .Skip((pageNumber - 1) * pageSize)
+                .Take(pageSize)
+                .Select(mo => new
                 {
-                    BuyerOrderId = g.Key,
-                    DeliveryDate = g.Select(mo => mo.DeliveryDate).FirstOrDefault(),
-                    OrderDate = g.Select(mo => mo.OrderDate).FirstOrDefault(),
-                    Items = g.Select(mo => new
+                    OrderId = mo.Id,
+                    DeliveryDate = mo.DeliveryDate,
+                    OrderDate = mo.OrderDate,
+                    TotalAmount = mo.TotalAmount,
+                    Status = mo.Status.ToString(),
+                    Items = mo.Items.Select(i => new
                     {
-                        ProductName = mo.ProductName,
-                        Quantity = mo.Quantity,
-                        SupplierName = mo.SupplierName,
-                        UnitPrice = mo.UnitPrice,
-                        SupplierProductId = mo.SupplierProductId
-                    }).ToList(),
-                    TotalAmount = g.Sum(mo => mo.Quantity * mo.UnitPrice)
+                        ProductName = i.ProductName,
+                        Quantity = i.Quantity,
+                        SupplierName = i.SupplierName,
+                        UnitPrice = i.UnitPrice,
+                        SupplierProductId = i.SupplierProductId
+                    }).ToList()
                 })
-                .OrderByDescending(g => g.OrderDate)
-                .Skip((pageNumber - 1) * pageSize) 
-                .Take(pageSize); 
+                .ToListAsync();
 
             var response = new
             {
@@ -1044,17 +1270,11 @@ namespace Order.API.Controllers
                 PageNumber = pageNumber,
                 PageSize = pageSize,
                 TotalPages = (int)Math.Ceiling((double)totalCount / pageSize),
-                Orders = orderGroups.Select(og => new
-                {
-                    OrderId = og.BuyerOrderId,
-                    DeliveryDate = og.DeliveryDate,
-                    OrderDate = og.OrderDate,
-                    TotalAmount = og.TotalAmount,
-                    Items = og.Items
-                }).ToList()
+                Orders = orders
             };
 
             return Ok(response);
         }
+
     }
 }

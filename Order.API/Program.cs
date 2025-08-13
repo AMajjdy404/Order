@@ -1,4 +1,6 @@
 ﻿
+using FirebaseAdmin;
+using Google.Apis.Auth.OAuth2;
 using Microsoft.EntityFrameworkCore;
 using Order.API.Extensions;
 using Order.API.Helpers;
@@ -14,6 +16,11 @@ namespace Order.API
         public async static Task Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
+
+            FirebaseApp.Create(new AppOptions()
+            {
+                Credential = GoogleCredential.FromFile(Path.Combine(AppContext.BaseDirectory, "FirebaseConfig/firebase-adminsdk.json"))
+            });
 
             // Add services to the container.
 

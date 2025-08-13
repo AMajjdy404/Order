@@ -30,6 +30,12 @@ namespace Order.API.Controllers
         private readonly IMapper _mapper;
         private readonly IGenericRepository<Product> _productRepo;
         private readonly IGenericRepository<SupplierOrder> _supplierOrderRepo;
+        private readonly IGenericRepository<MyOrder> _myOrderRepo;
+        private readonly IGenericRepository<SupplierPenalty> _supplierPenaltyRepo;
+        private readonly IGenericRepository<ReturnOrderItem> _returnOrderItemsRepo;
+        private readonly IGenericRepository<SupplierOrderItem> _supplierOrderItemRepo;
+        private readonly IGenericRepository<SupplierStatement> _supplierStatementRepo;
+        private readonly IGenericRepository<MyOrderItem> _myOrderItemRepo;
 
         public SupplierController(
             IGenericRepository<Supplier> supplierRepo,
@@ -40,7 +46,14 @@ namespace Order.API.Controllers
             ILogger<BuyerController> logger,
             IMapper mapper,
             IGenericRepository<Product> productRepo,
-            IGenericRepository<SupplierOrder> supplierOrderRepo)
+            IGenericRepository<SupplierOrder> supplierOrderRepo,
+            IGenericRepository<MyOrder> myOrderRepo,
+            IGenericRepository<SupplierPenalty> supplierPenaltyRepo,
+            IGenericRepository<ReturnOrderItem> returnOrderItemsRepo,
+            IGenericRepository<SupplierOrderItem> supplierOrderItemRepo,
+            IGenericRepository<SupplierStatement> supplierStatementRepo,
+            IGenericRepository<MyOrderItem> myOrderItemRepo
+             )
         {
             _supplierRepo = supplierRepo;
             _supplierProductRepo = supplierProductRepo;
@@ -51,6 +64,12 @@ namespace Order.API.Controllers
             _mapper = mapper;
             _productRepo = productRepo;
             _supplierOrderRepo = supplierOrderRepo;
+            _myOrderRepo = myOrderRepo;
+            _supplierPenaltyRepo = supplierPenaltyRepo;
+            _returnOrderItemsRepo = returnOrderItemsRepo;
+            _supplierOrderItemRepo = supplierOrderItemRepo;
+            _supplierStatementRepo = supplierStatementRepo;
+            _myOrderItemRepo = myOrderItemRepo;
         }
 
         [HttpPost("register")]
@@ -246,45 +265,711 @@ namespace Order.API.Controllers
         }
 
 
-
-        [HttpGet("getSupplierOrders")]
+        [HttpGet("getPendingSupplierOrders")]
         [Authorize]
-        public async Task<ActionResult> GetSupplierOrders()
+        public async Task<ActionResult> GetPendingSupplierOrders([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            // جلب الصفحات من الريبو مع include للعناصر فقط (تجنّب include الذي يخلق روابط عكسية كثيرة)
+            var paged = await _supplierOrderRepo.GetPagedAsync(
+                page,
+                pageSize,
+                predicate: o => o.SupplierId == supplierId && o.Status == OrderStatus.Pending,
+                orderBy: o => o.DeliveryDate,
+                descending: true,
+                includes: o => o.Items
+            );
+
+            // map/projection لإزالة الروابط العكسية وتجنّب cycles
+            var dtoList = paged.Items.Select(so => new SupplierOrderDto
+            {
+                Id = so.Id,
+                BuyerName = so.BuyerName,
+                BuyerPhone = so.BuyerPhone,
+                PropertyName = so.PropertyName,
+                PropertyAddress = so.PropertyAddress,
+                PropertyLocation = so.PropertyLocation,
+                TotalAmount = so.TotalAmount,
+                DeliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
+                Status = so.Status.ToString(),
+                Items = so.Items?.Select(i => new SupplierOrderItemDto
+                {
+                    Id = i.Id,
+                    SupplierProductId = i.SupplierProductId,
+                    ProductName = i.ProductName,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    LineTotal = i.Quantity * i.UnitPrice
+                }).ToList() ?? new List<SupplierOrderItemDto>()
+            }).ToList();
+
+            var response = new PagedResponseDto<SupplierOrderDto>
+            {
+                Items = dtoList,
+                Page = page,
+                PageSize = pageSize,
+                TotalItems = paged.TotalItems,
+                TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
+            };
+
+            return Ok(response);
+        }
+
+
+        [HttpPost("confirmOrCancelSupplierOrder/{id}")]
+        [Authorize]
+        public async Task<ActionResult> ConfirmOrCancelSupplierOrder(int id, [FromBody] bool isConfirmed)
         {
             var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(supplierId))
                 return Unauthorized("Supplier ID not found in token.");
 
-            var orders = await _supplierOrderRepo.GetAllAsync(
-                so => so.SupplierId == int.Parse(supplierId),
-                q => q.Include(so => so.Items)
-                      .ThenInclude(oi => oi.SupplierProduct)
-                      .ThenInclude(sp => sp.Product)
+            var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
+                so => so.Id == id && so.SupplierId == int.Parse(supplierId),
+                query => query.Include(so => so.Supplier)
             );
 
-            var result = orders.Select(so => new
-            {
-                supplierOrderId = so.Id,
-                buyerName = so.BuyerName,
-                buyerPhone = so.BuyerPhone,
-                propertyName = so.PropertyName,
-                propertyAddress = so.PropertyAddress,
-                propertyLocation = so.PropertyLocation,
-                totalAmount = so.TotalAmount,
-                deliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
-                paymentMethod = so.PaymentMethod,
-                status = so.Status.ToString(),
-                items = so.Items.Select(i => new
-                {
-                    productName = i.ProductName,
-                    quantity = i.Quantity,
-                    unitPrice = i.UnitPrice
-                })
-            });
+            if (supplierOrder == null)
+                return NotFound("Supplier order not found or not authorized.");
 
-            return Ok(result);
+            if (supplierOrder.Status != OrderStatus.Pending)
+                return BadRequest("Order must be in Pending status before marking as Confirmed.");
+
+            var myOrder = await _myOrderRepo.GetFirstOrDefaultAsync(
+                mo => mo.Id == supplierOrder.MyOrderId,
+                query => query.Include(mo => mo.Items)
+            );
+
+            if (myOrder == null)
+                return NotFound("My order not found for this supplier order.");
+
+            var supplier = supplierOrder.Supplier;
+
+            if (isConfirmed)
+            {
+                supplierOrder.Status = OrderStatus.Confirmed;
+                myOrder.Status = OrderStatus.Confirmed;
+
+                var profitPercentage = (decimal) supplier.ProfitPercentage / 100m;
+                var commission = supplierOrder.TotalAmount * profitPercentage;
+
+                supplier.WalletBalance -= commission;
+                _supplierRepo.Update(supplier);
+
+                var statement = new SupplierStatement
+                {
+                    SupplierId = supplier.Id,
+                    SupplierOrderId = supplierOrder.Id,
+                    Amount = commission,
+                    Title = "رسوم الطلبية",
+                    BuyerName = supplierOrder.BuyerName,
+                    PropertyName = supplierOrder.PropertyName,
+                    DeliveryDate = supplierOrder.DeliveryDate,
+                    CreatedAt = DateTime.UtcNow
+                };
+                await _supplierStatementRepo.AddAsync(statement);
+
+                await _supplierRepo.SaveChangesAsync();
+                await _supplierStatementRepo.SaveChangesAsync();
+            }
+            else
+            {
+                supplierOrder.Status = OrderStatus.Canceled;
+                myOrder.Status = OrderStatus.Canceled;
+
+                decimal penalty = supplierOrder.TotalAmount * 0.005m;
+
+                supplier.WalletBalance -= penalty;
+                _supplierRepo.Update(supplier);
+
+                var penaltyRecord = new SupplierPenalty
+                {
+                    SupplierId = supplier.Id,
+                    SupplierOrderId = supplierOrder.Id,
+                    PenaltyAmount = penalty,
+                    Reason = "الغاء الطلبية",
+                    BuyerName = supplierOrder.BuyerName,
+                    DeliveryDate = supplierOrder.DeliveryDate,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                await _supplierPenaltyRepo.AddAsync(penaltyRecord);
+
+                await _supplierRepo.SaveChangesAsync();
+                await _supplierPenaltyRepo.SaveChangesAsync();
+            }
+
+            _supplierOrderRepo.Update(supplierOrder);
+            _myOrderRepo.Update(myOrder);
+            await _supplierOrderRepo.SaveChangesAsync();
+            await _myOrderRepo.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = $"Order {(isConfirmed ? "confirm" : "cancel")}ed successfully",
+                status = supplierOrder.Status.ToString()
+            });
         }
 
+
+        [HttpPut("supplier-orders/{orderId}/update-quantities")]
+        [Authorize]
+        public async Task<IActionResult> UpdateSupplierAndMyOrderQuantities(int orderId,[FromBody] List<UpdateOrderItemQuantityDto> updatedItems)
+        {
+            // 1️⃣ جلب الطلب المورد
+            var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
+                o => o.Id == orderId && o.Status == OrderStatus.Pending,
+                q => q.Include(o => o.Items)
+            );
+
+            if (supplierOrder == null)
+                return NotFound("Supplier order not found or not pending.");
+
+            // 2️⃣ تعديل الكميات + تعديل مخزون SupplierProduct
+            foreach (var item in updatedItems)
+            {
+                var orderItem = supplierOrder.Items.FirstOrDefault(i => i.Id == item.ItemId);
+                if (orderItem != null)
+                {
+                    var supplierProduct = await _supplierProductRepo.GetFirstOrDefaultAsync(
+                        p => p.Id == orderItem.SupplierProductId
+                    );
+
+                    if (supplierProduct == null)
+                        return BadRequest($"Supplier product not found for item {orderItem.Id}");
+
+                    if (item.NewQuantity < orderItem.Quantity)
+                    {
+                        // تقليل الكمية → زيادة المخزون
+                        var difference = orderItem.Quantity - item.NewQuantity;
+                        supplierProduct.Quantity += difference;
+                    }
+                    else if (item.NewQuantity > orderItem.Quantity)
+                    {
+                        // زيادة الكمية → خصم من المخزون
+                        var difference = item.NewQuantity - orderItem.Quantity;
+                        if (supplierProduct.Quantity < difference)
+                            return BadRequest($"Not enough stock for product {supplierProduct.Id}");
+
+                        supplierProduct.Quantity -= difference;
+                    }
+
+                    // تعديل الكمية في الطلب
+                    orderItem.Quantity = item.NewQuantity;
+
+                    // تحديث المنتج
+                    _supplierProductRepo.Update(supplierProduct);
+                }
+            }
+
+            // تحديث المبلغ الإجمالي للطلب المورد
+            supplierOrder.TotalAmount = supplierOrder.Items.Sum(i => i.Quantity * i.UnitPrice);
+            _supplierOrderRepo.Update(supplierOrder);
+
+            // 3️⃣ تحديث الطلب الرئيسي MyOrder
+            var myOrder = await _myOrderRepo.GetFirstOrDefaultAsync(
+                o => o.Id == supplierOrder.MyOrderId && o.Status == OrderStatus.Pending,
+                q => q.Include(o => o.Items)
+            );
+
+            if (myOrder != null)
+            {
+                foreach (var supplierItem in supplierOrder.Items)
+                {
+                    var myOrderItem = myOrder.Items
+                        .FirstOrDefault(i => i.SupplierProductId == supplierItem.SupplierProductId);
+
+                    if (myOrderItem != null)
+                        myOrderItem.Quantity = supplierItem.Quantity;
+                }
+
+                myOrder.TotalAmount = myOrder.Items.Sum(i => i.Quantity * i.UnitPrice);
+                _myOrderRepo.Update(myOrder);
+            }
+
+            // 4️⃣ حفظ التغييرات
+            await _supplierOrderRepo.SaveChangesAsync();
+
+            return Ok("Quantities, total amounts, and stock updated successfully.");
+        }
+
+        [HttpPost("markAsShipped/{id}")]
+        [Authorize]
+        public async Task<ActionResult> MarkOrderAsShipped(int id)
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
+                so => so.Id == id && so.SupplierId == int.Parse(supplierId)
+            );
+
+            if (supplierOrder == null)
+                return NotFound("Order not found or not authorized.");
+
+            if (supplierOrder.Status != OrderStatus.Confirmed)
+                return BadRequest("Order must be in Confirmed status before marking as Shipped.");
+
+            supplierOrder.Status = OrderStatus.Shipped;
+
+            var myOrder = await _myOrderRepo.GetFirstOrDefaultAsync(mo => mo.Id == supplierOrder.MyOrderId);
+            if (myOrder != null)
+            {
+                myOrder.Status = OrderStatus.Shipped;
+                _myOrderRepo.Update(myOrder);
+            }
+
+            _supplierOrderRepo.Update(supplierOrder);
+            await _supplierOrderRepo.SaveChangesAsync();
+            await _myOrderRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Order marked as Shipped", status = supplierOrder.Status.ToString() });
+        }
+
+        [HttpPost("markAsDelivered/{id}")]
+        [Authorize]
+        public async Task<ActionResult> MarkOrderAsDelivered(int id)
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
+                so => so.Id == id && so.SupplierId == int.Parse(supplierId)
+            );
+
+            if (supplierOrder == null)
+                return NotFound("Order not found or not authorized.");
+
+            if (supplierOrder.Status != OrderStatus.Shipped)
+                return BadRequest("Order must be in Shipped status before marking as Delivered.");
+
+            supplierOrder.Status = OrderStatus.Delivered;
+
+            var myOrder = await _myOrderRepo.GetFirstOrDefaultAsync(mo => mo.Id == supplierOrder.MyOrderId);
+            if (myOrder != null)
+            {
+                myOrder.Status = OrderStatus.Delivered;
+                _myOrderRepo.Update(myOrder);
+            }
+
+            _supplierOrderRepo.Update(supplierOrder);
+            await _supplierOrderRepo.SaveChangesAsync();
+            await _myOrderRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Order marked as Delivered", status = supplierOrder.Status.ToString() });
+        }
+
+        [HttpGet("getConfirmedOrders")]
+        [Authorize]
+        public async Task<ActionResult> GetConfirmedSupplierOrders([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            // جلب الصفحات من الريبو مع include للعناصر فقط (تجنّب include الذي يخلق روابط عكسية كثيرة)
+            var paged = await _supplierOrderRepo.GetPagedAsync(
+                page,
+                pageSize,
+                predicate: o => o.SupplierId == supplierId && o.Status == OrderStatus.Confirmed,
+                orderBy: o => o.DeliveryDate,
+                descending: true,
+                includes: o => o.Items
+            );
+
+            // map/projection لإزالة الروابط العكسية وتجنّب cycles
+            var dtoList = paged.Items.Select(so => new SupplierOrderDto
+            {
+                Id = so.Id,
+                BuyerName = so.BuyerName,
+                BuyerPhone = so.BuyerPhone,
+                PropertyName = so.PropertyName,
+                PropertyAddress = so.PropertyAddress,
+                PropertyLocation = so.PropertyLocation,
+                TotalAmount = so.TotalAmount,
+                DeliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
+                Status = so.Status.ToString(),
+                Items = so.Items?.Select(i => new SupplierOrderItemDto
+                {
+                    Id = i.Id,
+                    SupplierProductId = i.SupplierProductId,
+                    ProductName = i.ProductName,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    LineTotal = i.Quantity * i.UnitPrice
+                }).ToList() ?? new List<SupplierOrderItemDto>()
+            }).ToList();
+
+            var response = new PagedResponseDto<SupplierOrderDto>
+            {
+                Items = dtoList,
+                Page = page,
+                PageSize = pageSize,
+                TotalItems = paged.TotalItems,
+                TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
+            };
+
+            return Ok(response);
+        }
+
+        [HttpGet("getShippedOrders")]
+        [Authorize]
+        public async Task<ActionResult> GetShippedSupplierOrders([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            // جلب الصفحات من الريبو مع include للعناصر فقط (تجنّب include الذي يخلق روابط عكسية كثيرة)
+            var paged = await _supplierOrderRepo.GetPagedAsync(
+                page,
+                pageSize,
+                predicate: o => o.SupplierId == supplierId && o.Status == OrderStatus.Shipped,
+                orderBy: o => o.DeliveryDate,
+                descending: true,
+                includes: o => o.Items
+            );
+
+            // map/projection لإزالة الروابط العكسية وتجنّب cycles
+            var dtoList = paged.Items.Select(so => new SupplierOrderDto
+            {
+                Id = so.Id,
+                BuyerName = so.BuyerName,
+                BuyerPhone = so.BuyerPhone,
+                PropertyName = so.PropertyName,
+                PropertyAddress = so.PropertyAddress,
+                PropertyLocation = so.PropertyLocation,
+                TotalAmount = so.TotalAmount,
+                DeliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
+                Status = so.Status.ToString(),
+                Items = so.Items?.Select(i => new SupplierOrderItemDto
+                {
+                    Id = i.Id,
+                    SupplierProductId = i.SupplierProductId,
+                    ProductName = i.ProductName,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    LineTotal = i.Quantity * i.UnitPrice
+                }).ToList() ?? new List<SupplierOrderItemDto>()
+            }).ToList();
+
+            var response = new PagedResponseDto<SupplierOrderDto>
+            {
+                Items = dtoList,
+                Page = page,
+                PageSize = pageSize,
+                TotalItems = paged.TotalItems,
+                TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
+            };
+
+            return Ok(response);
+        }
+
+        [HttpGet("getDeliveredOrders")]
+        [Authorize]
+        public async Task<IActionResult> GetDeliveredOrders([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            // جلب الصفحات من الريبو مع include للعناصر فقط (تجنّب include الذي يخلق روابط عكسية كثيرة)
+            var paged = await _supplierOrderRepo.GetPagedAsync(
+                page,
+                pageSize,
+                predicate: o => o.SupplierId == supplierId && o.Status == OrderStatus.Delivered,
+                orderBy: o => o.DeliveryDate,
+                descending: true,
+                includes: o => o.Items
+            );
+
+            // map/projection لإزالة الروابط العكسية وتجنّب cycles
+            var dtoList = paged.Items.Select(so => new SupplierOrderDto
+            {
+                Id = so.Id,
+                BuyerName = so.BuyerName,
+                BuyerPhone = so.BuyerPhone,
+                PropertyName = so.PropertyName,
+                PropertyAddress = so.PropertyAddress,
+                PropertyLocation = so.PropertyLocation,
+                TotalAmount = so.TotalAmount,
+                DeliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
+                Status = so.Status.ToString(),
+                Items = so.Items?.Select(i => new SupplierOrderItemDto
+                {
+                    Id = i.Id,
+                    SupplierProductId = i.SupplierProductId,
+                    ProductName = i.ProductName,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    LineTotal = i.Quantity * i.UnitPrice
+                }).ToList() ?? new List<SupplierOrderItemDto>()
+            }).ToList();
+
+            var response = new PagedResponseDto<SupplierOrderDto>
+            {
+                Items = dtoList,
+                Page = page,
+                PageSize = pageSize,
+                TotalItems = paged.TotalItems,
+                TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
+            };
+
+            return Ok(response);
+        }
+
+
+        [HttpPost("returnOrder")]
+        [Authorize]
+        public async Task<IActionResult> ReturnOrder([FromBody] List<ReturnOrderItemDto> items)
+        {
+            if (items == null || !items.Any())
+                return BadRequest("No items to return.");
+
+            foreach (var item in items)
+            {
+                // جلب عنصر الطلبية من المورد
+                var supplierOrderItem = await _supplierOrderItemRepo.GetByIdAsync(item.SupplierOrderItemId);
+                if (supplierOrderItem == null)
+                    return NotFound($"Order item {item.SupplierOrderItemId} not found.");
+
+                // جلب الطلبية نفسها
+                var supplierOrder = await _supplierOrderRepo.GetByIdAsync(supplierOrderItem.SupplierOrderId);
+                if (supplierOrder == null)
+                    return NotFound($"Supplier order {supplierOrderItem.SupplierOrderId} not found.");
+
+                if (supplierOrder.Status != OrderStatus.Delivered)
+                    return BadRequest($"Order {supplierOrder.Id} is not delivered yet. Cannot process return.");
+
+                // إضافة المرتجع
+                var returnItem = new ReturnOrderItem
+                {
+                    SupplierOrderItemId = item.SupplierOrderItemId,
+                    ReturnedQuantity = item.Quantity,
+                    ReturnDate = DateTime.UtcNow
+                };
+
+                await _returnOrderItemsRepo.AddAsync(returnItem);
+                await _returnOrderItemsRepo.SaveChangesAsync();
+
+                // تحديث المخزون
+                var supplierProduct = await _supplierProductRepo.GetByIdAsync(supplierOrderItem.SupplierProductId);
+                if (supplierProduct == null)
+                    return NotFound($"Supplier product {supplierOrderItem.SupplierProductId} not found.");
+
+                supplierProduct.Quantity += item.Quantity;
+
+                if (supplierProduct.Quantity > 0)
+                {
+                    supplierProduct.Status = Status.Active;
+                    supplierProduct.IsAvailable = true;
+                }
+                _supplierProductRepo.Update(supplierProduct);
+
+                // تعديل الكمية في الطلبية نفسها
+                supplierOrderItem.Quantity -= item.Quantity;
+                if (supplierOrderItem.Quantity < 0) supplierOrderItem.Quantity = 0;
+                _supplierOrderItemRepo.Update(supplierOrderItem);
+
+                // تعديل الكمية في MyOrderItem لو الطلبية مرتبطة
+                var myOrderItem = await _myOrderItemRepo.GetFirstOrDefaultAsync(m => m.MyOrderId == supplierOrder.MyOrderId && m.SupplierProductId == supplierOrderItem.SupplierProductId);
+                if (myOrderItem != null)
+                {
+                    myOrderItem.Quantity -= item.Quantity;
+                    if (myOrderItem.Quantity < 0) myOrderItem.Quantity = 0;
+                    _myOrderItemRepo.Update(myOrderItem);
+                }
+
+                // تعديل السعر الكلي في SupplierOrder
+                supplierOrder.TotalAmount -= supplierOrderItem.UnitPrice * item.Quantity;
+                if (supplierOrder.TotalAmount < 0) supplierOrder.TotalAmount = 0;
+                _supplierOrderRepo.Update(supplierOrder);
+
+                // تعديل السعر الكلي في MyOrder لو الطلبية مرتبطة
+                if (supplierOrder.MyOrderId != 0)
+                {
+                    var myOrder = await _myOrderRepo.GetByIdAsync(supplierOrder.MyOrderId);
+                    if (myOrder != null)
+                    {
+                        myOrder.TotalAmount -= supplierOrderItem.UnitPrice * item.Quantity;
+                        if (myOrder.TotalAmount < 0) myOrder.TotalAmount = 0;
+                        _myOrderRepo.Update(myOrder);
+                    }
+                }
+
+                await _supplierProductRepo.SaveChangesAsync();
+                await _supplierOrderItemRepo.SaveChangesAsync();
+                await _myOrderItemRepo.SaveChangesAsync();
+                await _supplierOrderRepo.SaveChangesAsync();
+                await _myOrderRepo.SaveChangesAsync();
+            }
+
+            return Ok("Return processed successfully.");
+        }
+
+
+        #region Statistics
+
+        [HttpGet("getSupplierStatements")]
+        [Authorize]
+        public async Task<IActionResult> GetSupplierStatements([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            var paged = await _supplierStatementRepo.GetPagedAsync(
+                page,
+                pageSize,
+                predicate: s => s.SupplierId == supplierId,
+                orderBy: s => s.CreatedAt,
+                descending: true
+            );
+
+            var dtoList = paged.Items.Select(s => new SupplierStatementDto
+            {
+                Id = s.Id,
+                SupplierOrderId = s.SupplierOrderId ?? 0,
+                Amount = s.Amount,
+                Title = s.Title,
+                BuyerName = s.BuyerName,
+                PropertyName = s.PropertyName,
+                DeliveryDate = s.DeliveryDate?.ToString("dd-MM-yyyy"),
+                CreatedAt = s.CreatedAt.ToString("dd-MM-yyyy HH:mm")
+            }).ToList();
+
+            return Ok(new PagedResponseDto<SupplierStatementDto>
+            {
+                Items = dtoList,
+                Page = page,
+                PageSize = pageSize,
+                TotalItems = paged.TotalItems,
+                TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
+            });
+        }
+
+        [HttpGet("getReturnOrders")]
+        [Authorize]
+        public async Task<IActionResult> GetReturnOrders([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            var paged = await _returnOrderItemsRepo.GetPagedAsync(
+                page,
+                pageSize,
+                predicate: r => r.SupplierOrderItem.SupplierOrder.SupplierId == supplierId,
+                orderBy: r => r.ReturnDate,
+                descending: true,
+                includes: r => r.SupplierOrderItem
+            );
+
+            var dtoList = paged.Items.Select(r => new ReturnOrderDto
+            {
+                Id = r.Id,
+                SupplierOrderItemId = r.SupplierOrderItemId,
+                ReturnedQuantity = r.ReturnedQuantity,
+                ReturnDate = r.ReturnDate.ToString("dd-MM-yyyy"),
+                ProductName = r.SupplierOrderItem.ProductName
+            }).ToList();
+
+            return Ok(new PagedResponseDto<ReturnOrderDto>
+            {
+                Items = dtoList,
+                Page = page,
+                PageSize = pageSize,
+                TotalItems = paged.TotalItems,
+                TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
+            });
+        }
+
+        [HttpGet("getSupplierPenalties")]
+        [Authorize]
+        public async Task<IActionResult> GetSupplierPenalties([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            if (page <= 0) page = 1;
+            if (pageSize <= 0) pageSize = 10;
+
+            var paged = await _supplierPenaltyRepo.GetPagedAsync(
+                page,
+                pageSize,
+                predicate: p => p.SupplierId == supplierId,
+                orderBy: p => p.CreatedAt,
+                descending: true
+            );
+
+            var dtoList = paged.Items.Select(p => new SupplierPenaltyDto
+            {
+                Id = p.Id,
+                SupplierOrderId = p.SupplierOrderId,
+                PenaltyAmount = p.PenaltyAmount,
+                Reason = p.Reason,
+                BuyerName = p.BuyerName,
+                DeliveryDate = p.DeliveryDate.ToString("dd-MM-yyyy"),
+                CreatedAt = p.CreatedAt.ToString("dd-MM-yyyy HH:mm")
+            }).ToList();
+
+            return Ok(new PagedResponseDto<SupplierPenaltyDto>
+            {
+                Items = dtoList,
+                Page = page,
+                PageSize = pageSize,
+                TotalItems = paged.TotalItems,
+                TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
+            });
+        }
+
+
+        #endregion
 
     }
 }
