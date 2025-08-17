@@ -172,6 +172,71 @@ namespace Order.API.Controllers
             }
         }
 
+        [HttpGet("getProductsByName")]
+        [Authorize]
+        public async Task<ActionResult<PagedResponseDto<ReturnedProductDto>>> SearchProductsByName(
+        [FromQuery] string? productName,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            if (page < 1 || pageSize < 1)
+                return BadRequest(new { message = "Page number and page size must be greater than zero" });
+
+            try
+            {
+                // جلب كل المنتجات
+                var productsQuery = await _productRepo.GetAllAsync();
+
+                // لو فيه اسم متبعت، فلتر بالاسم
+                if (!string.IsNullOrWhiteSpace(productName))
+                {
+                    productsQuery = productsQuery
+                        .Where(p => p.Name.Contains(productName, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                }
+
+                // تحويل المنتجات إلى ReturnedProductDto
+                var mappedProducts = productsQuery.Select(p => new ReturnedProductDto
+                {
+                    Id = p.Id,
+                    Name = p.Name,
+                    Category = p.Category,
+                    Company = p.Company,
+                    ImageUrl = p.ImageUrl
+                }).ToList();
+
+                var totalItems = mappedProducts.Count;
+                var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+
+                var pagedProducts = mappedProducts
+                    .OrderBy(p => p.Id)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                var response = new PagedResponseDto<ReturnedProductDto>
+                {
+                    Items = pagedProducts,
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalItems = totalItems,
+                    TotalPages = totalPages
+                };
+
+                if (!pagedProducts.Any())
+                    return NotFound(new { message = "No products found." });
+
+                return Ok(new { message = "Products retrieved successfully", Data = response });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving products: {ex.Message}");
+            }
+        }
+
 
         [HttpPost("addSupplierProduct")]
         [Authorize]
@@ -327,7 +392,7 @@ namespace Order.API.Controllers
 
         [HttpPost("confirmOrCancelSupplierOrder/{id}")]
         [Authorize]
-        public async Task<ActionResult> ConfirmOrCancelSupplierOrder(int id, [FromBody] bool isConfirmed)
+        public async Task<ActionResult> ConfirmOrCancelSupplierOrder(int id, [FromQuery] bool isConfirmed)
         {
             var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(supplierId))

@@ -12,6 +12,7 @@
         public string PropertyInsideImagePath { get; set; }
         public string PropertyOutsideImagePath { get; set; }
         public bool IsActive { get; set; }
+        public string? DeviceToken { get; set; }
         public string Token { get; set; } = "";
     }
 }

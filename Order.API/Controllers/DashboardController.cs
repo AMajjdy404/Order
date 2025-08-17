@@ -31,6 +31,7 @@ namespace Order.API.Controllers
         private readonly IMapper _mapper;
         private readonly IGenericRepository<Supplier> _supplierRepo;
         private readonly IPasswordHasher<Supplier> _passwordHasher;
+        private readonly INotificationService _notificationService;
 
         public DashboardController(
             IGenericRepository<Product> productRepo,
@@ -42,7 +43,8 @@ namespace Order.API.Controllers
              ILogger<BuyerController> logger,
             IMapper mapper,
              IGenericRepository<Supplier> supplierRepo,
-            IPasswordHasher<Supplier> passwordHasher)
+            IPasswordHasher<Supplier> passwordHasher,
+            INotificationService notificationService)
         {
             _productRepo = productRepo;
             _userManager = userManager;
@@ -54,6 +56,7 @@ namespace Order.API.Controllers
             _mapper = mapper;
             _supplierRepo = supplierRepo;
             _passwordHasher = passwordHasher;
+            _notificationService = notificationService;
         }
 
         [HttpPost("login")]
@@ -128,7 +131,7 @@ namespace Order.API.Controllers
 
         [HttpPut("activateBuyer/{id}")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<BuyerToReturnDto>> ActivateBuyer(int id, [FromServices] NotificationService notificationService)
+        public async Task<ActionResult<BuyerToReturnDto>> ActivateBuyer(int id)
         {
             try
             {
@@ -155,7 +158,7 @@ namespace Order.API.Controllers
                 // إرسال إشعار للـ Buyer
                 if (!string.IsNullOrWhiteSpace(buyer.DeviceToken))
                 {
-                    await notificationService.SendNotificationAsync(
+                    await _notificationService.SendNotificationAsync(
                         buyer.DeviceToken,
                         "Account Activated 🎉",
                         "Your account has been activated successfully. Welcome!"
@@ -177,7 +180,7 @@ namespace Order.API.Controllers
 
 
         #region Supplier
-        [HttpPut("update/{id}")]
+        [HttpPut("updateSupplier/{id}")]
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<SupplierToReturnDto>> UpdateSupplier(int id, [FromForm] UpdateSupplierDto updateDto)
         {

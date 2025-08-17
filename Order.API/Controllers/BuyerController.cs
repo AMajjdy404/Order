@@ -12,7 +12,6 @@ using Order.API.Helpers;
 using Order.Domain.Interfaces;
 using Order.Domain.Models;
 using Order.Domain.Services;
-using Order.Infrastructure.Data;
 
 
 namespace Order.API.Controllers
