@@ -976,7 +976,7 @@ namespace Order.API.Controllers
                 return NotFound("Product not found in cart.");
 
             int maxOrderLimit = orderItem.SupplierProduct.MaxOrderLimit;
-            int availableStock = orderItem.SupplierProduct.Quantity;
+            int availableStock = orderItem.SupplierProduct.Quantity; 
 
             if (action == "plus")
             {
