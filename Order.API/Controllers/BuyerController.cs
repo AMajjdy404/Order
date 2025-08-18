@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Order.API.Dtos;
 using Order.API.Dtos.Buyer;
+using Order.API.Dtos.Dashboard;
 using Order.API.Dtos.Pagination;
 using Order.API.Dtos.Supplier;
 using Order.API.Helpers;
@@ -35,8 +36,7 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<SupplierOrder> _supplierOrderRepo;
         private readonly IGenericRepository<MyOrder> _myOrderRepo;
         private readonly IGenericRepository<ReferralCode> _referralCodeRepo;
-        private readonly IUnitOfWork _unitOfWork;
-        
+        private readonly IGenericRepository<Advertisement> _advertisementRepo;
 
         public BuyerController(
             IGenericRepository<Buyer> buyerRepo,
@@ -54,8 +54,9 @@ namespace Order.API.Controllers
              IGenericRepository<SupplierOrder> supplierOrderRepo,
              IGenericRepository<MyOrder> myOrderRepo,
              IGenericRepository<ReferralCode> referralCodeRepo,
-             IUnitOfWork unitOfWork
-            
+             IGenericRepository<Advertisement> advertisementRepo
+
+
             )
         {
             _buyerRepo = buyerRepo;
@@ -72,8 +73,7 @@ namespace Order.API.Controllers
             _supplierOrderRepo = supplierOrderRepo;
             _myOrderRepo = myOrderRepo;
             _referralCodeRepo = referralCodeRepo;
-            _unitOfWork = unitOfWork;
-            
+            _advertisementRepo = advertisementRepo;
         }
 
         [HttpPost("register")]
@@ -1274,6 +1274,22 @@ namespace Order.API.Controllers
 
             return Ok(response);
         }
+
+        [HttpGet("advertisements")]
+        public async Task<ActionResult<IReadOnlyList<AdvertisementDto>>> Advertisements()
+        {
+            var ads = await _advertisementRepo.GetAllAsync();
+
+            var result = ads.Select(a => new AdvertisementDto
+            {
+                Id = a.Id,
+                Name = a.Name,
+                ImageUrl = a.ImageUrl
+            }).ToList();
+
+            return Ok(result);
+        }
+
 
     }
 }

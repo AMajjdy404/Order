@@ -33,6 +33,28 @@ namespace Order.Infrastructure.Implementation
                 query = query.Include(include);
             return await query.Where(predicate).ToListAsync();
         }
+        public async Task<IEnumerable<T>> GetAllAsync(
+       Expression<Func<T, bool>>? filter = null,
+       Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null,
+       params Expression<Func<T, object>>[] includes)
+        {
+            IQueryable<T> query = _context.Set<T>();
+
+            if (filter != null)
+                query = query.Where(filter);
+
+            if (includes != null)
+            {
+                foreach (var include in includes)
+                    query = query.Include(include);
+            }
+
+            if (orderBy != null)
+                query = orderBy(query);
+
+            return await query.ToListAsync();
+        }
+
 
         public async Task<IQueryable<T>> GetAllQueryableAsync(Expression<Func<T, bool>> predicate = null,
         Func<IQueryable<T>, IQueryable<T>> include = null)

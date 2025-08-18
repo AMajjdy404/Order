@@ -1,4 +1,5 @@
-﻿using AutoMapper;
+﻿using System.Linq.Expressions;
+using AutoMapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -32,6 +33,10 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<Supplier> _supplierRepo;
         private readonly IPasswordHasher<Supplier> _passwordHasher;
         private readonly INotificationService _notificationService;
+        private readonly IGenericRepository<MyOrder> _myOrderRepo;
+        private readonly IGenericRepository<SupplierOrder> _supplierOrderRepo;
+        private readonly IGenericRepository<ReturnOrderItem> _returnOrderRepo;
+        private readonly IGenericRepository<Advertisement> _advertisementRepo;
 
         public DashboardController(
             IGenericRepository<Product> productRepo,
@@ -44,7 +49,11 @@ namespace Order.API.Controllers
             IMapper mapper,
              IGenericRepository<Supplier> supplierRepo,
             IPasswordHasher<Supplier> passwordHasher,
-            INotificationService notificationService)
+            INotificationService notificationService,
+            IGenericRepository<MyOrder> myOrderRepo,
+            IGenericRepository<SupplierOrder> supplierOrderRepo,
+            IGenericRepository<ReturnOrderItem> returnOrderRepo,
+            IGenericRepository<Advertisement> advertisementRepo)
         {
             _productRepo = productRepo;
             _userManager = userManager;
@@ -57,6 +66,10 @@ namespace Order.API.Controllers
             _supplierRepo = supplierRepo;
             _passwordHasher = passwordHasher;
             _notificationService = notificationService;
+            _myOrderRepo = myOrderRepo;
+            _supplierOrderRepo = supplierOrderRepo;
+            _returnOrderRepo = returnOrderRepo;
+            _advertisementRepo = advertisementRepo;
         }
 
         [HttpPost("login")]
@@ -89,6 +102,96 @@ namespace Order.API.Controllers
                 Token = token
             });
         }
+
+
+        #region Main Page
+
+        [HttpGet("buyers/count")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetBuyersCount()
+        {
+            try
+            {
+                var buyers = await _buyerRepo.GetAllAsync();
+                var count = buyers.Count;
+
+                return Ok(new { message = "Buyers count retrieved successfully", Count = count });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving Buyers count: {ex.Message}");
+            }
+        }
+
+        [HttpGet("suppliers/count")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetSuppliersCount()
+        {
+            try
+            {
+                var suppliers = await _supplierRepo.GetAllAsync();
+                var count = suppliers.Count;
+
+                return Ok(new { message = "Suppliers count retrieved successfully", Count = count });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving suppliers count: {ex.Message}");
+            }
+        }
+
+        [HttpGet("orders/pending/today-count")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetPendingOrdersCountToday()
+        {
+            try
+            {
+                var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+                var orders = await _myOrderRepo.GetAllAsync(o =>
+                    o.Status == OrderStatus.Pending &&
+                    o.OrderDate == today
+                );
+
+                var count = orders.Count();
+
+                return Ok(new { message = "Pending orders count for today retrieved successfully", Count = count });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving pending orders count for today: {ex.Message}");
+            }
+        }
+
+        [HttpGet("orders/pending/month-count")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetPendingOrdersCountThisMonth()
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                var startOfMonth = new DateOnly(now.Year, now.Month, 1);
+                var endOfMonth = startOfMonth.AddMonths(1).AddDays(-1);
+
+                var orders = await _myOrderRepo.GetAllAsync(o =>
+                    o.Status == OrderStatus.Pending &&
+                    o.OrderDate >= startOfMonth &&
+                    o.OrderDate <= endOfMonth
+                );
+
+                var count = orders.Count();
+
+                return Ok(new { message = "Pending orders count for this month retrieved successfully", Count = count });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving pending orders count for this month: {ex.Message}");
+            }
+        }
+
+
+
+        #endregion
 
 
         #region Buyer
@@ -342,11 +445,366 @@ namespace Order.API.Controllers
                 return StatusCode(500, $"Error retrieving suppliers: {ex.Message}");
             }
         }
+
+
+
+        #endregion
+
+
+        [HttpGet("getSupplierOrders")]
+        public async Task<IActionResult> GetSupplierOrders(
+        [FromQuery] string? orderStatus,
+        [FromQuery] string? buyerName,
+        [FromQuery] string? supplierType,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
+        {
+            if (page <= 0 || pageSize <= 0)
+                return BadRequest("Invalid pagination parameters.");
+
+            try
+            {
+                // فلتر الحالة
+                OrderStatus? statusFilter = null;
+                if (!string.IsNullOrWhiteSpace(orderStatus))
+                {
+                    if (Enum.TryParse<OrderStatus>(orderStatus, true, out var parsedStatus))
+                        statusFilter = parsedStatus;
+                    else
+                        return BadRequest("Invalid order status.");
+                }
+
+                // فلتر نوع المورد
+                SupplierType? supplierTypeFilter = null;
+                if (!string.IsNullOrWhiteSpace(supplierType))
+                {
+                    if (Enum.TryParse<SupplierType>(supplierType, true, out var parsedSupplierType))
+                        supplierTypeFilter = parsedSupplierType;
+                    else
+                        return BadRequest("Invalid supplier type.");
+                }
+
+                // الفلتر الرئيسي
+                Expression<Func<SupplierOrder, bool>>? filter = o =>
+                    (!statusFilter.HasValue || o.Status == statusFilter.Value) &&
+                    (string.IsNullOrWhiteSpace(buyerName) || o.BuyerName.Contains(buyerName)) &&
+                    (!supplierTypeFilter.HasValue || o.Supplier.SupplierType == supplierTypeFilter.Value);
+
+                // جلب البيانات
+                var orders = await _supplierOrderRepo.GetAllAsync(
+                    filter: filter,
+                    includes: new Expression<Func<SupplierOrder, object>>[]
+                    {
+                o => o.Supplier,
+                o => o.Items
+                    }
+                );
+
+                // pagination
+                var totalCount = orders.Count();
+                var pagedOrders = orders
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                // تحويل للـ DTO
+                var orderDtos = pagedOrders.Select(o => new ReturnedSupplierOrderDto
+                {
+                    Id = o.Id,
+                    TotalAmount = o.TotalAmount,
+                    DeliveryDate = o.DeliveryDate,
+                    PaymentMethod = o.PaymentMethod,
+                    Status = o.Status.ToString(),
+                    WalletPaymentAmount = o.WalletPaymentAmount,
+
+                    SupplierId = o.SupplierId,
+                    SupplierName = o.Supplier?.Name,
+                    SupplierType = o.Supplier.SupplierType.ToString(),
+
+                    BuyerName = o.BuyerName,
+                    BuyerPhone = o.BuyerPhone,
+                    PropertyName = o.PropertyName,
+                    PropertyAddress = o.PropertyAddress,
+                    PropertyLocation = o.PropertyLocation,
+
+                    Items = o.Items.Select(i => new SupplierOrderItemDto
+                    {
+                        Id = i.Id,
+                        SupplierProductId = i.SupplierProductId,
+                        ProductName = i.ProductName,
+                        Quantity = i.Quantity,
+                        UnitPrice = i.UnitPrice,
+                        LineTotal = i.Quantity * i.UnitPrice
+                    }).ToList()
+                });
+
+                return Ok(new
+                {
+                    TotalCount = totalCount,
+                    Page = page,
+                    PageSize = pageSize,
+                    Data = orderDtos
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+
+
+        [HttpGet("getReturnOrders")]
+        public async Task<IActionResult> GetReturnOrders(
+        [FromQuery] string? buyerName,
+        [FromQuery] int? day,
+        [FromQuery] int? month,
+        [FromQuery] int? year,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
+        {
+            if (page <= 0 || pageSize <= 0)
+                return BadRequest("Invalid pagination parameters.");
+
+            try
+            {
+                // فلتر بالاسم + التاريخ
+                Expression<Func<ReturnOrderItem, bool>>? filter = r =>
+                    (string.IsNullOrWhiteSpace(buyerName) ||
+                     r.SupplierOrderItem.SupplierOrder.BuyerName.Contains(buyerName)) &&
+
+                    // فلترة بالتاريخ (Year / Month / Day)
+                    ((!day.HasValue && !month.HasValue && !year.HasValue) || // لا يوجد فلترة
+
+                     (year.HasValue && !month.HasValue && !day.HasValue &&
+                      r.ReturnDate.Year == year.Value) || // فلترة بسنة
+
+                     (year.HasValue && month.HasValue && !day.HasValue &&
+                      r.ReturnDate.Year == year.Value &&
+                      r.ReturnDate.Month == month.Value) || // فلترة بسنة وشهر
+
+                     (year.HasValue && month.HasValue && day.HasValue &&
+                      r.ReturnDate.Year == year.Value &&
+                      r.ReturnDate.Month == month.Value &&
+                      r.ReturnDate.Day == day.Value)); // فلترة بسنة + شهر + يوم
+
+                var returnOrders = await _returnOrderRepo.GetAllAsync(
+                    filter: filter,
+                    includes: new Expression<Func<ReturnOrderItem, object>>[]
+                    {
+                r => r.SupplierOrderItem,
+                r => r.SupplierOrderItem.SupplierOrder,
+                r => r.SupplierOrderItem.SupplierOrder.Supplier
+                    }
+                );
+
+                var totalCount = returnOrders.Count();
+                var pagedReturns = returnOrders
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                var returnDtos = pagedReturns.Select(r => new ReturnedOrderDto
+                {
+                    Id = r.Id,
+                    SupplierOrderItemId = r.SupplierOrderItemId,
+                    ProductName = r.SupplierOrderItem.ProductName,
+                    ReturnedQuantity = r.ReturnedQuantity,
+                    ReturnDate = r.ReturnDate,
+
+                    BuyerName = r.SupplierOrderItem.SupplierOrder.BuyerName,
+                    BuyerPhone = r.SupplierOrderItem.SupplierOrder.BuyerPhone,
+                    BuyerPropertyName = r.SupplierOrderItem.SupplierOrder.PropertyName,
+
+                    SupplierId = r.SupplierOrderItem.SupplierOrder.Supplier.Id,
+                    SupplierName = r.SupplierOrderItem.SupplierOrder.Supplier.Name,
+                    SupplierType = r.SupplierOrderItem.SupplierOrder.Supplier.SupplierType.ToString(),
+                    SupplierCommercialName = r.SupplierOrderItem.SupplierOrder.Supplier.CommercialName
+                });
+
+                return Ok(new
+                {
+                    TotalCount = totalCount,
+                    Page = page,
+                    PageSize = pageSize,
+                    Data = returnDtos
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+
+        [HttpPost("addAdvertisement")]
+        public async Task<IActionResult> AddAdvertisement([FromForm] CreateAdvertisementDto dto)
+        {
+            if (dto.Image == null || dto.Image.Length == 0)
+                return BadRequest("Image is required.");
+
+            // Check allowed file types (jpg, png, jpeg)
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png" };
+            var extension = Path.GetExtension(dto.Image.FileName).ToLower();
+
+            if (!allowedExtensions.Contains(extension))
+                return BadRequest("Only JPG, JPEG, and PNG files are allowed.");
+
+            // Check max file size
+            var maxFileSize = 5 * 1024 * 1024;
+            if (dto.Image.Length > maxFileSize)
+                return BadRequest("File size must be less than 5MB.");
+
+            string? imageUrl = null;
+            try
+            {
+                // رفع الصورة
+                imageUrl = DocumentSettings.UploadFile(dto.Image, "Advertisements");
+
+                var ad = new Advertisement
+                {
+                    Name = dto.Name,
+                    ImageUrl = imageUrl
+                };
+
+                await _advertisementRepo.AddAsync(ad);
+                var result = await _advertisementRepo.SaveChangesAsync();
+
+                if (result == 0)
+                {
+                    if (imageUrl != null)
+                        DocumentSettings.DeleteFile(imageUrl, "Advertisements");
+
+                    return StatusCode(500, "Failed to save advertisement.");
+                }
+
+                return Ok(new
+                {
+                    Message = "Advertisement added successfully",
+                    Data = ad
+                });
+            }
+            catch (Exception ex)
+            {
+                if (imageUrl != null)
+                    DocumentSettings.DeleteFile(imageUrl, "Advertisements");
+
+                return StatusCode(500, $"An error occurred: {ex.Message}");
+            }
+        }
+
+        [HttpDelete("deleteAdvertisement/{id}")]
+        public async Task<IActionResult> DeleteAdvertisement(int id)
+        {
+            var ad = await _advertisementRepo.GetByIdAsync(id);
+            if (ad == null)
+                return NotFound("Advertisement not found.");
+
+            DocumentSettings.DeleteFile(ad.ImageUrl, "Advertisements");
+
+            _advertisementRepo.Delete(ad);
+            await _advertisementRepo.SaveChangesAsync();
+
+            return Ok(new { Message = "Advertisement deleted successfully" });
+        }
+
+        [HttpPut("updateAdvertisement/{id}")]
+        public async Task<IActionResult> UpdateAdvertisement(int id, [FromForm] UpdateAdvertisementDto dto)
+        {
+            var ad = await _advertisementRepo.GetByIdAsync(id);
+            if (ad == null)
+                return NotFound("Advertisement not found.");
+
+            string? newImageUrl = null;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(dto.Name))
+                    ad.Name = dto.Name;
+
+                if (dto.Image != null && dto.Image.Length > 0)
+                {
+                    var allowedExtensions = new[] { ".jpg", ".jpeg", ".png" };
+                    var extension = Path.GetExtension(dto.Image.FileName).ToLower();
+
+                    if (!allowedExtensions.Contains(extension))
+                        return BadRequest("Only JPG, JPEG, and PNG files are allowed.");
+
+                    var maxFileSize = 5 * 1024 * 1024;
+                    if (dto.Image.Length > maxFileSize)
+                        return BadRequest("File size must be less than 5MB.");
+
+                    newImageUrl = DocumentSettings.UploadFile(dto.Image, "Advertisements");
+
+                    if (!string.IsNullOrEmpty(ad.ImageUrl))
+                        DocumentSettings.DeleteFile(ad.ImageUrl, "Advertisements");
+
+                    ad.ImageUrl = newImageUrl;
+                }
+
+                _advertisementRepo.Update(ad);
+                var result = await _advertisementRepo.SaveChangesAsync();
+
+                if (result == 0)
+                {
+                    if (newImageUrl != null)
+                        DocumentSettings.DeleteFile(newImageUrl, "Advertisements");
+
+                    return StatusCode(500, "Failed to update advertisement.");
+                }
+
+                return Ok(new
+                {
+                    Message = "Advertisement updated successfully",
+                    Data = ad
+                });
+            }
+            catch (Exception ex)
+            {
+                if (newImageUrl != null)
+                    DocumentSettings.DeleteFile(newImageUrl, "Advertisements");
+
+                return StatusCode(500, $"An error occurred: {ex.Message}");
+            }
+        }
+
+        [HttpGet("getAllAdvertisements")]
+        public async Task<ActionResult<PagedResult<AdvertisementDto>>> GetAllAdvertisements(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? search = null)
+        {
+            if (page <= 0 || pageSize <= 0)
+                return BadRequest("Invalid pagination parameters.");
+
+            Expression<Func<Advertisement, bool>> predicate =
+                a => string.IsNullOrEmpty(search) || a.Name.Contains(search);
+
+            Expression<Func<Advertisement, object>> orderBy = a => a.Id;
+
+            var pagedResult = await _advertisementRepo.GetPagedAsync(
+                page: page,
+                pageSize: pageSize,
+                predicate: predicate,
+                orderBy: orderBy,
+                descending: false
+            );
+
+            var result = new PagedResult<AdvertisementDto>
+            {
+                TotalItems = pagedResult.TotalItems,
+                Items = pagedResult.Items.Select(a => new AdvertisementDto
+                {
+                    Id = a.Id,
+                    Name = a.Name,
+                    ImageUrl = $"{_configuration["BaseApiUrl"]}{a.ImageUrl}"
+                }).ToList()
+            };
+
+            return Ok(result);
+        }
+
+
+
     }
-
-
-    #endregion
-
-
 }
 

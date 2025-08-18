@@ -23,6 +23,7 @@ namespace Order.Infrastructure.Data
         public DbSet<SupplierPenalty> SupplierPenalties { get; set; }
         public DbSet<ReturnOrderItem> ReturnOrders { get; set; }
         public DbSet<SupplierStatement> SupplierStatements { get; set; }
+        public DbSet<Advertisement> Advertisements { get; set; }
 
         public OrderDbContext(DbContextOptions<OrderDbContext> options) :base(options)
         {
