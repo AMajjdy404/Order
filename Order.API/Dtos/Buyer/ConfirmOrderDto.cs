@@ -6,6 +6,7 @@ namespace Order.API.Dtos.Buyer
     {
         [Required(ErrorMessage = "Delivery Date is Required")]
         public DateOnly DeliveryDate { get; set; }
-        public decimal? WalletAmount { get; set; }
+        public bool UseWallet { get; set; } = false;
+        public string? Notes { get; set; } = string.Empty;
     }
 }

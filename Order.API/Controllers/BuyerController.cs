@@ -104,6 +104,7 @@ namespace Order.API.Controllers
             buyer.PropertyInsideImagePath = insideImagePath;
             buyer.PropertyOutsideImagePath = outsideImagePath;
             buyer.IsActive = false;
+            buyer.WalletBalance += 1000;
 
             // توليد كود دعوة واحد وتخزينه في جدول ReferralCodes
             var referralCode = new ReferralCode
@@ -216,7 +217,6 @@ namespace Order.API.Controllers
         }
 
         [HttpPut("updateDeviceToken/{buyerId}")]
-        [Authorize]
         public async Task<IActionResult> UpdateDeviceToken(int buyerId, [FromBody] UpdateDeviceTokenDto dto)
         {
             var buyer = await _buyerRepo.GetByIdAsync(buyerId);
@@ -225,6 +225,7 @@ namespace Order.API.Controllers
 
             buyer.DeviceToken = dto.DeviceToken;
             _buyerRepo.Update(buyer);
+            await _buyerOrderRepo.SaveChangesAsync();
 
             return Ok(new { message = "Device token updated successfully" });
         }
@@ -1123,13 +1124,14 @@ namespace Order.API.Controllers
             if (buyer == null)
                 return NotFound("Buyer not found.");
 
-            decimal walletAmount = confirmDto.WalletAmount ?? 0;
-            if (walletAmount > 0)
+            decimal walletAmount = 0;
+
+            // ✅ لو المشتري اختار UseWallet
+            if (confirmDto.UseWallet)
             {
+                walletAmount = totalOrderAmount * 0.01m; // 1%
                 if (walletAmount > buyer.WalletBalance)
                     return BadRequest("Insufficient wallet balance.");
-                if (walletAmount > totalOrderAmount)
-                    return BadRequest("Wallet amount cannot exceed order total.");
             }
 
             var currentDateTime = DateTime.UtcNow;
@@ -1186,20 +1188,24 @@ namespace Order.API.Controllers
                 if (totalPrice < group.Key.MinimumOrderPrice || totalItems < group.Key.MinimumOrderItems)
                     return BadRequest($"Order for supplier {group.Key.Name} does not meet minimum requirements.");
 
-                var walletPaymentAmount = walletAmount > 0 ? (totalPrice * walletAmount / totalOrderAmount) : 0;
+                // ✅ توزيع نسبة المحفظة على المورد
+                var walletPaymentAmount = confirmDto.UseWallet ? (totalPrice * 0.01m) : 0;
+
                 var supplierOrder = new SupplierOrder
                 {
                     SupplierId = group.Key.Id,
                     MyOrderId = myOrder.Id,
                     TotalAmount = totalPrice - walletPaymentAmount,
                     DeliveryDate = confirmDto.DeliveryDate,
-                    PaymentMethod = walletAmount > 0 ? "Wallet" : "Cash",
+                    PaymentMethod = confirmDto.UseWallet ? "Wallet+Cash" : "Cash",
                     Status = OrderStatus.Pending,
+                    BuyerId = int.Parse(buyerId),
                     BuyerName = buyer.FullName,
                     BuyerPhone = buyer.PhoneNumber,
                     PropertyName = buyer.PropertyName,
                     PropertyAddress = buyer.PropertyAddress,
                     PropertyLocation = buyer.PropertyLocation,
+                    Notes = confirmDto.Notes ?? "",
                     Items = group.Select(oi => new SupplierOrderItem
                     {
                         SupplierProductId = oi.SupplierProductId,
@@ -1212,13 +1218,15 @@ namespace Order.API.Controllers
 
                 await _supplierOrderRepo.AddAsync(supplierOrder);
 
-                if (walletAmount > 0)
+                // ✅ أضفنا للمورد رصيد المحفظة
+                if (walletPaymentAmount > 0)
                 {
                     group.Key.WalletBalance += walletPaymentAmount;
                     _supplierRepo.Update(group.Key);
                 }
             }
 
+            // ✅ خصم من المشتري
             if (walletAmount > 0)
             {
                 buyer.WalletBalance -= walletAmount;
@@ -1227,15 +1235,17 @@ namespace Order.API.Controllers
 
             _buyerOrderRepo.Delete(pendingOrder);
             await _buyerOrderRepo.SaveChangesAsync();
-            
             await _supplierOrderRepo.SaveChangesAsync();
 
             return Ok(new
             {
                 message = "Order confirmed successfully",
+                usedWallet = confirmDto.UseWallet,
+                walletAmount = walletAmount,
                 remainingAmount = remainingAmount
             });
         }
+
 
         [HttpGet("myOrders")]
         [Authorize]

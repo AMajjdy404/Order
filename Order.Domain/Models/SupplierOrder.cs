@@ -29,6 +29,7 @@ namespace Order.Domain.Models
         public string PropertyName { get; set; }
         public string PropertyAddress { get; set; }
         public string PropertyLocation { get; set; }
+        public string? Notes { get; set; }
         public Supplier Supplier { get; set; }
         public List<SupplierOrderItem> Items { get; set; }
         public decimal WalletPaymentAmount { get; set; }

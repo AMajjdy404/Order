@@ -19,7 +19,7 @@ namespace Order.API
 
             FirebaseApp.Create(new AppOptions()
             {
-                Credential = GoogleCredential.FromFile(Path.Combine(AppContext.BaseDirectory, "FirebaseConfig/firebase-adminsdk.json"))
+                Credential = GoogleCredential.FromFile(Path.Combine(AppContext.BaseDirectory, "FirebaseConfig/order-481cc-firebase-adminsdk-fbsvc-73132aa9f3.json"))
             });
 
             // Add services to the container.
