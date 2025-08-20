@@ -56,7 +56,7 @@ namespace Order.Infrastructure.Implementation
         }
 
 
-        public async Task<IQueryable<T>> GetAllQueryableAsync(Expression<Func<T, bool>> predicate = null,
+        public  IQueryable<T> GetAllQueryable(Expression<Func<T, bool>> predicate = null,
         Func<IQueryable<T>, IQueryable<T>> include = null)
         {
             IQueryable<T> query = _context.Set<T>();

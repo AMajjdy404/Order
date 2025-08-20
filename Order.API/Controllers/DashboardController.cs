@@ -3,6 +3,7 @@ using AutoMapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Order.API.Dtos;
 using Order.API.Dtos.Buyer;
 using Order.API.Dtos.Dashboard;
@@ -37,6 +38,7 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<SupplierOrder> _supplierOrderRepo;
         private readonly IGenericRepository<ReturnOrderItem> _returnOrderRepo;
         private readonly IGenericRepository<Advertisement> _advertisementRepo;
+        private readonly IGenericRepository<SupplierStatement> _supplierStatementRepo;
 
         public DashboardController(
             IGenericRepository<Product> productRepo,
@@ -53,7 +55,8 @@ namespace Order.API.Controllers
             IGenericRepository<MyOrder> myOrderRepo,
             IGenericRepository<SupplierOrder> supplierOrderRepo,
             IGenericRepository<ReturnOrderItem> returnOrderRepo,
-            IGenericRepository<Advertisement> advertisementRepo)
+            IGenericRepository<Advertisement> advertisementRepo,
+            IGenericRepository<SupplierStatement> supplierStatementRepo)
         {
             _productRepo = productRepo;
             _userManager = userManager;
@@ -70,6 +73,7 @@ namespace Order.API.Controllers
             _supplierOrderRepo = supplierOrderRepo;
             _returnOrderRepo = returnOrderRepo;
             _advertisementRepo = advertisementRepo;
+            _supplierStatementRepo = supplierStatementRepo;
         }
 
         [HttpPost("login")]
@@ -96,12 +100,165 @@ namespace Order.API.Controllers
             var roles = await _userManager.GetRolesAsync(appOwner);
             return Ok(new AppOwnerResponseDto
             {
-                Username = appOwner.UserName,
+                Id = appOwner.Id,
                 Email = appOwner.Email,
                 Roles = roles.ToList(),
                 Token = token
             });
         }
+
+        #region App Owner
+        [HttpPost("addAppOwner")]
+        public async Task<IActionResult> Register([FromBody] RegisterAppOwnerDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var existingUser = await _userManager.FindByEmailAsync(dto.Email);
+            if (existingUser != null)
+                return BadRequest("Email is already registered.");
+
+            if (dto.Role != "Editor" && dto.Role != "Admin")
+                return BadRequest("Role must be either 'Editor' or 'Admin'.");
+
+            var appOwner = new AppOwner
+            {
+                Email = dto.Email,
+                UserName = dto.Email.Split("@")[0]
+            };
+
+            var result = await _userManager.CreateAsync(appOwner, dto.Password);
+
+            if (!result.Succeeded)
+                return BadRequest(result.Errors);
+
+            await _userManager.AddToRoleAsync(appOwner, dto.Role);
+
+            return Ok(new
+            {
+                message = "AppOwner registered successfully",
+                userId = appOwner.Id,
+                email = appOwner.Email,
+                role = dto.Role
+            });
+        }
+
+        [HttpPut("updateAppOwner/{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UpdateAppOwner(string id, [FromBody] UpdateAppOwnerDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            try
+            {
+                var user = await _userManager.FindByIdAsync(id);
+                if (user == null)
+                    return NotFound("AppOwner not found.");
+
+                user.Email = dto.Email ?? user.Email;
+
+                if (!string.IsNullOrEmpty(dto.Email))
+                    user.UserName = user.Email.Split("@")[0];
+
+                var result = await _userManager.UpdateAsync(user);
+                if (!result.Succeeded)
+                    return BadRequest(result.Errors);
+
+                if (!string.IsNullOrWhiteSpace(dto.Role))
+                {
+                    var currentRoles = await _userManager.GetRolesAsync(user);
+                    await _userManager.RemoveFromRolesAsync(user, currentRoles);
+                    await _userManager.AddToRoleAsync(user, dto.Role);
+                }
+
+                return Ok("AppOwner updated successfully.");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"An error occurred: {ex.Message}");
+            }
+        }
+
+        [HttpGet("getAppOwnerById/{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetAppOwnerById(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                return BadRequest("Id is required.");
+
+            try
+            {
+                var user = await _userManager.FindByIdAsync(id);
+                if (user == null)
+                    return NotFound("AppOwner not found.");
+
+                var roles = await _userManager.GetRolesAsync(user);
+
+                return Ok(new AppOwnerResponseDto
+                {
+                    Id = user.Id,
+                    Email = user.Email,
+                    Roles = roles.ToList()
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"An error occurred: {ex.Message}");
+            }
+        }
+
+
+        [HttpGet("getAllAppOwners")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> GetAllAppOwners(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? search = null)
+        {
+            if (page <= 0 || pageSize <= 0)
+                return BadRequest("Invalid pagination parameters.");
+
+            try
+            {
+                var query = _userManager.Users.AsQueryable();
+
+                if (!string.IsNullOrWhiteSpace(search))
+                    query = query.Where(u => u.UserName.Contains(search) || u.Email.Contains(search));
+
+                var totalItems = await query.CountAsync();
+
+                var users = await query
+                    .OrderBy(u => u.UserName)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToListAsync();
+
+                var items = new List<AppOwnerResponseDto>();
+                foreach (var user in users)
+                {
+                    var roles = await _userManager.GetRolesAsync(user);
+                    items.Add(new AppOwnerResponseDto
+                    {
+                        Id = user.Id,
+                        Email = user.Email,
+                        Roles = roles.ToList()
+                    });
+                }
+
+                return Ok(new PagedResult<AppOwnerResponseDto>
+                {
+                    Items = items,
+                    TotalItems = totalItems
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"An error occurred: {ex.Message}");
+            }
+        } 
+        #endregion
+
 
 
         #region Main Page
@@ -802,6 +959,65 @@ namespace Order.API.Controllers
 
             return Ok(result);
         }
+
+
+
+        [HttpGet("getSupplierStatements")]
+        [Authorize]
+        public async Task<ActionResult<PagedResult<SupplierStatementDashboardDto>>> GetSupplierStatements(
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
+        [FromQuery] string? commercialName,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
+        {
+            if (page <= 0 || pageSize <= 0)
+                return BadRequest("Invalid pagination parameters.");
+
+            var query = _supplierStatementRepo.GetAllQueryable(
+                include: q => q.Include(s => s.Supplier)
+            );
+
+            // date filteration
+            if (fromDate.HasValue)
+                query = query.Where(s => s.CreatedAt.Date >= fromDate.Value.Date);
+
+            if (toDate.HasValue)
+                query = query.Where(s => s.CreatedAt.Date <= toDate.Value.Date);
+
+            // commercialName filteration
+            if (!string.IsNullOrWhiteSpace(commercialName))
+                query = query.Where(s => s.Supplier.CommercialName.Contains(commercialName));
+
+            var totalItems = await query.CountAsync();
+
+            var items = await query
+                .OrderByDescending(s => s.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(s => new SupplierStatementDashboardDto
+                {
+                    Id = s.Id,
+                    SupplierName = s.Supplier.Name,
+                    CommercialName = s.Supplier.CommercialName,
+                    SupplierType = s.Supplier.SupplierType.ToString(),
+                    WalletBalance = s.Supplier.WalletBalance,
+                    Amount = s.Amount,
+                    Title = s.Title,
+                    BuyerName = s.BuyerName,
+                    PropertyName = s.PropertyName,
+                    CreatedAt = s.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(new PagedResult<SupplierStatementDashboardDto>
+            {
+                Items = items,
+                TotalItems = totalItems
+            });
+        }
+
+
 
 
 

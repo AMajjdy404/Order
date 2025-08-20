@@ -215,6 +215,21 @@ namespace Order.API.Controllers
             }
         }
 
+        [HttpPut("updateDeviceToken/{buyerId}")]
+        [Authorize]
+        public async Task<IActionResult> UpdateDeviceToken(int buyerId, [FromBody] UpdateDeviceTokenDto dto)
+        {
+            var buyer = await _buyerRepo.GetByIdAsync(buyerId);
+            if (buyer == null)
+                return NotFound("Buyer not found");
+
+            buyer.DeviceToken = dto.DeviceToken;
+            _buyerRepo.Update(buyer);
+
+            return Ok(new { message = "Device token updated successfully" });
+        }
+
+
         [HttpGet("profile")]
         [Authorize]
         public async Task<ActionResult> GetBuyerProfile()

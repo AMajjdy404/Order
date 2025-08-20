@@ -20,7 +20,7 @@ namespace Order.Domain.Interfaces
         Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null,
         params Expression<Func<T, object>>[] includes);
 
-        Task<IQueryable<T>> GetAllQueryableAsync(Expression<Func<T, bool>> predicate = null, Func<IQueryable<T>, IQueryable<T>> include = null);
+        IQueryable<T> GetAllQueryable(Expression<Func<T, bool>> predicate = null, Func<IQueryable<T>, IQueryable<T>> include = null);
         ValueTask<T> GetByIdWithIncludeAsync(Guid id, params Expression<Func<T, object>>[] includes);
         ValueTask AddAsync(T item);
         public ValueTask<T> GetFirstOrDefaultAsync(Expression<Func<T, bool>> predicate);
