@@ -362,3 +362,4 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /Order.API/FirebaseConfig/order-481cc-firebase-adminsdk-fbsvc-73132aa9f3.json
+/Order.API/FirebaseConfig/order-481cc-firebase-adminsdk-fbsvc-054d4f2887.json
