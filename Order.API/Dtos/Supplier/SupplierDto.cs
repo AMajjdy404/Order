@@ -16,5 +16,6 @@
         public decimal MinimumOrderPrice { get; set; } 
         public int MinimumOrderItems { get; set; }
         public int DeliveryDays { get; set; }
+        public decimal? WalletBalance { get; set; }
     }
 }

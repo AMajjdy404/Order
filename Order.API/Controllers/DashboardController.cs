@@ -543,7 +543,10 @@ namespace Order.API.Controllers
 
         [HttpGet("getAllSuppliers")]
         [Authorize]
-        public async Task<ActionResult<PagedResponseDto<SupplierDto>>> GetAllSuppliers(int page = 1, int pageSize = 10)
+        public async Task<ActionResult<PagedResponseDto<SupplierDto>>> GetAllSuppliers(
+        int page = 1,
+        int pageSize = 10,
+        string? name = null)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
@@ -553,29 +556,34 @@ namespace Order.API.Controllers
 
             try
             {
-                var suppliers = await _supplierRepo.GetAllAsync();
-                var mappedSuppliers = new List<SupplierDto>();
+                var suppliersQuery = await _supplierRepo.GetAllAsync();
 
-                foreach (var supplier in suppliers)
+                // فلترة بالاسم (nullable)
+                if (!string.IsNullOrWhiteSpace(name))
                 {
-                    mappedSuppliers.Add(new SupplierDto
-                    {
-                        Id = supplier.Id,
-                        Name = supplier.Name,
-                        Email = supplier.Email,
-                        CommercialName = supplier.CommercialName,
-                        PhoneNumber = supplier.PhoneNumber,
-                        SupplierType = supplier.SupplierType.ToString(),
-                        WarehouseLocation = supplier.WarehouseLocation,
-                        WarehouseAddress = supplier.WarehouseAddress,
-                        WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{supplier.WarehouseImageUrl}",
-                        DeliveryMethod = supplier.DeliveryMethod,
-                        ProfitPercentage = supplier.ProfitPercentage,
-                        MinimumOrderPrice = supplier.MinimumOrderPrice,
-                        MinimumOrderItems = supplier.MinimumOrderItems,
-                        DeliveryDays = supplier.DeliveryDays
-                    });
+                    suppliersQuery = suppliersQuery
+                        .Where(s => s.Name.Contains(name) || s.CommercialName.Contains(name))
+                        .ToList();
                 }
+
+                var mappedSuppliers = suppliersQuery.Select(s => new SupplierDto
+                {
+                    Id = s.Id,
+                    Name = s.Name,
+                    Email = s.Email,
+                    CommercialName = s.CommercialName,
+                    PhoneNumber = s.PhoneNumber,
+                    SupplierType = s.SupplierType.ToString(),
+                    WarehouseLocation = s.WarehouseLocation,
+                    WarehouseAddress = s.WarehouseAddress,
+                    WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{s.WarehouseImageUrl}",
+                    DeliveryMethod = s.DeliveryMethod,
+                    ProfitPercentage = s.ProfitPercentage,
+                    MinimumOrderPrice = s.MinimumOrderPrice,
+                    MinimumOrderItems = s.MinimumOrderItems,
+                    DeliveryDays = s.DeliveryDays,
+                    WalletBalance = s.WalletBalance
+                }).ToList();
 
                 var totalItems = mappedSuppliers.Count;
                 var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
@@ -603,6 +611,33 @@ namespace Order.API.Controllers
             }
         }
 
+
+        [HttpPost("addToSupplierWallet")]
+        [Authorize(Roles = "Admin")] 
+        public async Task<IActionResult> AddToSupplierWallet([FromBody] AddToSupplierWalletDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var supplier = await _supplierRepo.GetByIdAsync(dto.SupplierId);
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (dto.Amount <= 0)
+                return BadRequest("Amount must be greater than zero.");
+
+            supplier.WalletBalance ??= 0;
+            supplier.WalletBalance += dto.Amount;
+
+            _supplierRepo.Update(supplier);
+            await _supplierRepo.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = $"Amount {dto.Amount} added successfully to supplier {supplier.Name} wallet.",
+                newBalance = supplier.WalletBalance
+            });
+        }
 
 
         #endregion

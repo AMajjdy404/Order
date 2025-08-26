@@ -312,12 +312,88 @@ namespace Order.API.Controllers
             }
         }
 
+        #region search 2022
+        //[HttpGet("search")]
+        //[Authorize]
+        //public async Task<ActionResult<PagedResponseDto<ProductDto>>> SearchProducts(
+        //    [FromQuery] string? productName,
+        //    [FromQuery] int page = 1,
+        //    [FromQuery] int pageSize = 10)
+        //{
+        //    if (!ModelState.IsValid)
+        //        return BadRequest(ModelState);
+
+        //    if (page < 1 || pageSize < 1)
+        //        return BadRequest(new { message = "Page number and page size must be greater than zero" });
+
+        //    try
+        //    {
+        //        // جلب المنتجات مع تصفية باسم المنتج (إذا وُجد)
+        //        var productsQuery = await _productRepo.GetAllAsync();
+        //        if (!string.IsNullOrEmpty(productName))
+        //        {
+        //            productsQuery = productsQuery
+        //                .Where(p => p.Name.Contains(productName, StringComparison.OrdinalIgnoreCase))
+        //                .ToList();
+        //        }
+
+        //        // جلب أقل PriceNow لكل منتج من SupplierProduct
+        //        var productIds = productsQuery.Select(p => p.Id).ToList();
+        //        var supplierProducts = await _supplierProductRepo.GetAllAsync(sp => productIds.Contains(sp.ProductId));
+
+        //        // تجميع أقل PriceNow لكل منتج
+        //        var lowestPrices = supplierProducts
+        //            .GroupBy(sp => sp.ProductId)
+        //            .Select(g => new { ProductId = g.Key, LowestPriceNow = g.Min(sp => sp.PriceNow) })
+        //            .ToDictionary(x => x.ProductId, x => x.LowestPriceNow);
+
+        //        // تحويل المنتجات إلى ProductDto مع إضافة LowestPriceNow
+        //        var mappedProducts = productsQuery.Select(p => new ProductDto
+        //        {
+        //            Id = p.Id,
+        //            Name = p.Name,
+        //            Category = p.Category,
+        //            Company = p.Company,
+        //            ImageUrl = p.ImageUrl,
+        //            LowestPriceNow = lowestPrices.ContainsKey(p.Id) ? lowestPrices[p.Id] : 0
+        //        }).ToList();
+
+        //        var totalItems = mappedProducts.Count;
+        //        var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+
+        //        var pagedProducts = mappedProducts
+        //            .OrderBy(p => p.Id)
+        //            .Skip((page - 1) * pageSize)
+        //            .Take(pageSize)
+        //            .ToList();
+
+        //        var response = new PagedResponseDto<ProductDto>
+        //        {
+        //            Items = pagedProducts,
+        //            Page = page,
+        //            PageSize = pageSize,
+        //            TotalItems = totalItems,
+        //            TotalPages = totalPages
+        //        };
+
+        //        if (!pagedProducts.Any())
+        //            return NotFound(new { message = "No products found for the specified criteria." });
+
+        //        return Ok(new { message = "Products retrieved successfully", Data = response });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, $"Error retrieving products: {ex.Message}");
+        //    }
+        //} 
+        #endregion
+
         [HttpGet("search")]
         [Authorize]
         public async Task<ActionResult<PagedResponseDto<ProductDto>>> SearchProducts(
-            [FromQuery] string? productName,
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 10)
+        [FromQuery] string? productName,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
@@ -327,26 +403,29 @@ namespace Order.API.Controllers
 
             try
             {
-                // جلب المنتجات مع تصفية باسم المنتج (إذا وُجد)
+                // 🟢 جلب كل المنتجات كـ List (عشان نتفادى CTE في SQL Server 2014)
                 var productsQuery = await _productRepo.GetAllAsync();
+
+                // 🟢 فلترة باسم المنتج في الذاكرة
                 if (!string.IsNullOrEmpty(productName))
                 {
+                    var lowerName = productName.ToLower();
                     productsQuery = productsQuery
-                        .Where(p => p.Name.Contains(productName, StringComparison.OrdinalIgnoreCase))
+                        .Where(p => !string.IsNullOrEmpty(p.Name) && p.Name.ToLower().Contains(lowerName))
                         .ToList();
                 }
 
-                // جلب أقل PriceNow لكل منتج من SupplierProduct
+                // 🟢 جلب SupplierProducts (كاملة للـ products المطلوبة)
                 var productIds = productsQuery.Select(p => p.Id).ToList();
                 var supplierProducts = await _supplierProductRepo.GetAllAsync(sp => productIds.Contains(sp.ProductId));
 
-                // تجميع أقل PriceNow لكل منتج
+                // 🟢 تجميع أقل PriceNow لكل منتج
                 var lowestPrices = supplierProducts
                     .GroupBy(sp => sp.ProductId)
                     .Select(g => new { ProductId = g.Key, LowestPriceNow = g.Min(sp => sp.PriceNow) })
                     .ToDictionary(x => x.ProductId, x => x.LowestPriceNow);
 
-                // تحويل المنتجات إلى ProductDto مع إضافة LowestPriceNow
+                // 🟢 تحويل المنتجات إلى DTO
                 var mappedProducts = productsQuery.Select(p => new ProductDto
                 {
                     Id = p.Id,
@@ -357,6 +436,7 @@ namespace Order.API.Controllers
                     LowestPriceNow = lowestPrices.ContainsKey(p.Id) ? lowestPrices[p.Id] : 0
                 }).ToList();
 
+                // 🟢 Paging في الذاكرة
                 var totalItems = mappedProducts.Count;
                 var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
 
@@ -378,13 +458,14 @@ namespace Order.API.Controllers
                 if (!pagedProducts.Any())
                     return NotFound(new { message = "No products found for the specified criteria." });
 
-                return Ok(new { message = "Products retrieved successfully", Data = response });
+                return Ok(new { message = "Products retrieved successfully", data = response });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error retrieving products: {ex.Message}");
             }
         }
+
 
         [HttpGet("searchByCategory")]
         [Authorize]
@@ -1305,15 +1386,23 @@ namespace Order.API.Controllers
         {
             var ads = await _advertisementRepo.GetAllAsync();
 
-            var result = ads.Select(a => new AdvertisementDto
+            var baseUrl = _configuration["BaseApiUrl"];
+            var updatedAds = ads.Select(a => new AdvertisementDto
             {
                 Id = a.Id,
                 Name = a.Name,
-                ImageUrl = a.ImageUrl
+                ImageUrl = $"{baseUrl}{a.ImageUrl}"
             }).ToList();
+
+            var result = new
+            {
+                message = "Advertisements retrieved successfully",
+                data = updatedAds
+            };
 
             return Ok(result);
         }
+
 
 
     }
