@@ -1,5 +1,6 @@
 ﻿using System.Security.Claims;
 using AutoMapper;
+using Azure;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -14,6 +15,7 @@ using Order.API.Helpers;
 using Order.Domain.Interfaces;
 using Order.Domain.Models;
 using Order.Domain.Services;
+using static Google.Apis.Requests.BatchRequest;
 
 namespace Order.API.Controllers
 {
@@ -327,6 +329,153 @@ namespace Order.API.Controllers
             }
 
             return Ok(new { message = "Supplier product updated successfully" });
+        }
+
+        // 1- Get Offers (PriceBefore != 0)
+        [HttpGet("getSupplierProductsWithOffers")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<SupplierProductDto>>> GetSupplierProductsWithOffers()
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var products = await _supplierProductRepo.GetAllAsync(
+                sp => sp.SupplierId == int.Parse(supplierId) && sp.PriceBefore != 0,
+                sp => sp.Product,
+                sp => sp.Supplier
+            );
+
+            var result = _mapper.Map<IEnumerable<SupplierProductDto>>(products);
+            return Ok(new { message = "Offers retrieved successfully", Data = result });
+        }
+
+
+        // 2- Get Active Supplier Products
+        [HttpGet("getActiveSupplierProducts")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<SupplierProductDto>>> GetActiveSupplierProducts()
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var products = await _supplierProductRepo.GetAllAsync(
+                sp => sp.SupplierId == int.Parse(supplierId) && sp.Status == Status.Active,
+                sp => sp.Product,
+                sp => sp.Supplier
+            );
+
+            var result = _mapper.Map<IEnumerable<SupplierProductDto>>(products);
+            return Ok(new { message = "Active Supplier Products retrieved successfully", Data = result });
+        }
+
+
+        // 3- Get Not Active Supplier Products
+        [HttpGet("getNotActiveSupplierProducts")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<SupplierProductDto>>> GetNotActiveSupplierProducts()
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var products = await _supplierProductRepo.GetAllAsync(
+                sp => sp.SupplierId == int.Parse(supplierId) && sp.Status == Status.NotActive && sp.Quantity > 0,
+                sp => sp.Product,
+                sp => sp.Supplier
+            );
+
+            var result = _mapper.Map<IEnumerable<SupplierProductDto>>(products);
+            return Ok(new { message = "Not Active Supplier Products retrieved successfully", Data = result });
+        }
+
+
+        // 4- Get Unavailable Supplier Products (Quantity = 0)
+        [HttpGet("getUnavailableSupplierProducts")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<SupplierProductDto>>> GetUnavailableSupplierProducts()
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var products = await _supplierProductRepo.GetAllAsync(
+                sp => sp.SupplierId == int.Parse(supplierId) && sp.Quantity == 0,
+                sp => sp.Product,
+                sp => sp.Supplier
+            );
+
+            var result = _mapper.Map<IEnumerable<SupplierProductDto>>(products);
+            return Ok(new { message = "Unavailable Supplier Products retrieved successfully", Data = result });
+        }
+
+
+        // 5- Delete Supplier Product By Id
+        [HttpDelete("deleteSupplierProduct/{id}")]
+        [Authorize]
+        public async Task<ActionResult> DeleteSupplierProduct(int id)
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var supplierProduct = await _supplierProductRepo.GetByIdAsync(id);
+            if (supplierProduct == null)
+                return NotFound("Supplier product not found.");
+
+            if (supplierProduct.SupplierId != int.Parse(supplierId))
+                return Unauthorized("You are not authorized to delete this supplier product.");
+
+            try
+            {
+                _supplierProductRepo.Delete(supplierProduct);
+                await _supplierProductRepo.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error deleting supplier product: {ex.Message}");
+            }
+
+            return Ok(new { message = "Supplier product deleted successfully" });
+        }
+
+        // 6- Toggle Supplier Product Status
+        [HttpPut("toggleStatus/{id}")]
+        [Authorize]
+        public async Task<ActionResult> ToggleSupplierProductStatus(int id)
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var supplierProduct = await _supplierProductRepo.GetByIdAsync(id);
+            if (supplierProduct == null)
+                return NotFound("Supplier product not found.");
+
+            if (supplierProduct.SupplierId != int.Parse(supplierId))
+                return Unauthorized("You are not authorized to update this supplier product.");
+
+            // Toggle Status
+            supplierProduct.Status = supplierProduct.Status == Status.Active
+                ? Status.NotActive
+                : Status.Active;
+
+            try
+            {
+                _supplierProductRepo.Update(supplierProduct);
+                await _supplierProductRepo.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error toggling supplier product status: {ex.Message}");
+            }
+
+            return Ok(new
+            {
+                message = $"Supplier product status toggled successfully to {supplierProduct.Status}",
+                newStatus = supplierProduct.Status.ToString()
+            });
         }
 
 

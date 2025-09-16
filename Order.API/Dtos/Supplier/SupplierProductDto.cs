@@ -13,5 +13,6 @@
         public string Status { get; set; }
         public bool IsAvailable { get; set; }
         public int MaxOrderLimit { get; set; }
+        public string ProductImageUrl { get; set; }
     }
 }

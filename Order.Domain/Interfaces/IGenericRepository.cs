@@ -11,6 +11,7 @@ namespace Order.Domain.Interfaces
     public interface IGenericRepository<T> where T : class
     {
         ValueTask<IReadOnlyList<T>> GetAllAsync();
+        ValueTask<IEnumerable<T>> GetAllAsyncc();
         ValueTask<T> GetByIdAsync(Guid id);
         ValueTask<T> GetByIdAsync(string id);
         ValueTask<T> GetByIdAsync(int id);
@@ -35,6 +36,7 @@ namespace Order.Domain.Interfaces
         Task<IQueryable<T>> GetAllAsync(Expression<Func<T, bool>> predicate = null,
         Func<IQueryable<T>, IQueryable<T>> include = null);
         ValueTask<PagedResult<T>> GetPagedAsync(int page, int pageSize, Expression<Func<T, bool>> predicate, Expression<Func<T, object>> orderBy, bool descending = false, params Expression<Func<T, object>>[] includes);
+        IQueryable<T> Query();
 
     }
 }

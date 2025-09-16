@@ -173,7 +173,15 @@ namespace Order.Infrastructure.Implementation
             };
         }
 
-        
 
+        public IQueryable<T> Query()
+        {
+            return _context.Set<T>().AsQueryable();
+        }
+
+        public async ValueTask<IEnumerable<T>> GetAllAsyncc()
+        {
+            return await _context.Set<T>().ToListAsync();
+        }
     }
 }
