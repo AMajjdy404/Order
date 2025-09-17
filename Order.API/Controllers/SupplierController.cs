@@ -1185,5 +1185,95 @@ namespace Order.API.Controllers
 
         #endregion
 
+        [HttpGet("GetMyWallet")]
+        [Authorize]
+        public async Task<IActionResult> GetMyWallet()
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var supplier = await _supplierRepo.GetFirstOrDefaultAsync(
+                s => s.Id == int.Parse(supplierId)
+            );
+
+            if (supplier == null)
+                return NotFound("Supplier not found");
+
+            var response = new
+            {
+                supplierId = supplier.Id,
+                walletBalance = supplier.WalletBalance
+            };
+
+            return Ok(response);
+        }
+
+        [HttpDelete("DeleteMyAccount")]
+        [Authorize]
+        public async Task<IActionResult> DeleteMyAccount()
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Invalid token, SupplierId not found");
+
+            var supplier = await _supplierRepo.GetFirstOrDefaultAsync(
+                s => s.Id == int.Parse(supplierId)
+            );
+
+            if (supplier == null)
+                return NotFound("Supplier not found");
+
+            _supplierRepo.Delete(supplier);
+            await _supplierRepo.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Your account has been deleted successfully"
+            });
+        }
+
+        [HttpGet("GetMyProfile")]
+        [Authorize]
+        public async Task<IActionResult> GetMyProfile()
+        {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Invalid token, SupplierId not found");
+
+            var supplier = await _supplierRepo.GetFirstOrDefaultAsync(
+                s => s.Id == int.Parse(supplierId),
+                query => query.Include(s => s.Ratings)
+            );
+
+            if (supplier == null)
+                return NotFound("Supplier not found");
+
+            var dto = new SupplierDto
+            {
+                Id = supplier.Id,
+                Email = supplier.Email,
+                Name = supplier.Name,
+                CommercialName = supplier.CommercialName,
+                PhoneNumber = supplier.PhoneNumber,
+                SupplierType = supplier.SupplierType.ToString(),
+                WarehouseLocation = supplier.WarehouseLocation,
+                WarehouseAddress = supplier.WarehouseAddress,
+                WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{supplier.WarehouseImageUrl}",
+                DeliveryMethod = supplier.DeliveryMethod,
+                ProfitPercentage = supplier.ProfitPercentage,
+                MinimumOrderPrice = supplier.MinimumOrderPrice,
+                MinimumOrderItems = supplier.MinimumOrderItems,
+                DeliveryDays = supplier.DeliveryDays,
+                WalletBalance = supplier.WalletBalance,
+                AverageRating = supplier.Ratings.Any() ? supplier.Ratings.Average(r => r.Rate) : 0,
+                TotalRatings = supplier.Ratings.Count
+            };
+
+            return Ok(dto);
+        }
+
     }
 }

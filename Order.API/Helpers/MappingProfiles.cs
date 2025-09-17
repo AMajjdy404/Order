@@ -50,8 +50,8 @@ namespace Order.API.Helpers
                 .ForMember(dest => dest.ProductImageUrl, opt => opt.MapFrom(src => src.Product.ImageUrl));
 
             CreateMap<Supplier, SupplierDto>();
-           
 
+            
         }
     }
 }

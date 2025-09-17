@@ -32,5 +32,6 @@ namespace Order.Domain.Models
         public int MinimumOrderItems { get; set; }
         public int DeliveryDays { get; set; }
         public decimal? WalletBalance { get; set; } = 0;
+        public ICollection<SupplierRating> Ratings { get; set; } = new List<SupplierRating>();
     }
 }

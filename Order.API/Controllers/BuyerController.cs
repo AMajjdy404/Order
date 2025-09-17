@@ -40,7 +40,7 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<MyOrder> _myOrderRepo;
         private readonly IGenericRepository<ReferralCode> _referralCodeRepo;
         private readonly IGenericRepository<Advertisement> _advertisementRepo;
-        private readonly OrderDbContext _context;
+        private readonly IGenericRepository<SupplierRating> _supplierRatingRepo;
 
         public BuyerController(
             IGenericRepository<Buyer> buyerRepo,
@@ -59,7 +59,7 @@ namespace Order.API.Controllers
              IGenericRepository<MyOrder> myOrderRepo,
              IGenericRepository<ReferralCode> referralCodeRepo,
              IGenericRepository<Advertisement> advertisementRepo,
-             OrderDbContext context
+             IGenericRepository<SupplierRating> supplierRatingRepo
 
 
             )
@@ -79,7 +79,7 @@ namespace Order.API.Controllers
             _myOrderRepo = myOrderRepo;
             _referralCodeRepo = referralCodeRepo;
             _advertisementRepo = advertisementRepo;
-            _context = context;
+            _supplierRatingRepo = supplierRatingRepo;
         }
 
         [HttpPost("register")]
@@ -1690,6 +1690,212 @@ namespace Order.API.Controllers
             };
 
             return Ok(result);
+        }
+
+
+        [HttpPost("rateSupplier/{supplierId}")]
+        [Authorize]
+        public async Task<IActionResult> RateSupplier(int supplierId, [FromBody] SupplierRatingCreateDto ratingDto)
+        {
+            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(buyerId))
+                return Unauthorized("Buyer ID not found in token.");
+
+            if (ratingDto.Rate < 1 || ratingDto.Rate > 5)
+                return BadRequest("Rate must be between 1 and 5.");
+
+            var supplier = await _supplierRepo.GetByIdAsync(supplierId);
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            // اتأكد إن نفس الـ Buyer ما يقيّمش نفس المورد أكتر من مرة
+            var existingRating = await _supplierRatingRepo.GetFirstOrDefaultAsync(
+                r => r.SupplierId == supplierId && r.BuyerId == int.Parse(buyerId)
+            );
+
+            if (existingRating != null)
+                return BadRequest("You have already rated this supplier.");
+
+            var rating = new SupplierRating
+            {
+                SupplierId = supplierId,
+                BuyerId = int.Parse(buyerId),
+                Rate = ratingDto.Rate,
+                Comment = ratingDto.Comment
+            };
+
+            await _supplierRatingRepo.AddAsync(rating);
+            await _supplierRatingRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Supplier rated successfully" });
+        }
+
+        [HttpGet("getSupplierRatings/{supplierId}")]
+        public async Task<IActionResult> GetSupplierRatings(int supplierId)
+        {
+            var supplier = await _supplierRepo.GetFirstOrDefaultAsync(
+                           s => s.Id == supplierId,
+                           query => query
+                               .Include(s => s.Ratings)
+                                   .ThenInclude(r => r.Buyer) );
+            if (supplier == null)
+                return NotFound(new { Message = "Supplier not found" });
+
+            var response = new SupplierRatingResponseDto
+            {
+                SupplierId = supplier.Id,
+                SupplierName = supplier.Name,
+                SupplierWarehouseImage = $"{_configuration["BaseApiUrl"]}{supplier.WarehouseImageUrl}",
+                AverageRate = supplier.Ratings.Any() ? supplier.Ratings.Average(r => r.Rate) : 0,
+                TotalRates = supplier.Ratings.Count,
+                Ratings = supplier.Ratings.Select(r => new SupplierRatingDto
+                {
+                    Id = r.Id,
+                    BuyerName = r.Buyer?.FullName ?? "anonymous",
+                    Rate = r.Rate,
+                    Comment = r.Comment,
+                    CreatedAt = r.CreatedAt
+                }).ToList()
+            };
+
+            return Ok(new
+            {
+                message = "Ratings retrieved successfully",
+                data = response
+            });
+        }
+
+        [HttpGet("GetSupplierRatingSummary/{supplierId}")]
+        public async Task<IActionResult> GetSupplierRatingSummary(int supplierId)
+        {
+            var supplier = await _supplierRepo.GetFirstOrDefaultAsync(
+                s => s.Id == supplierId,
+                query => query.Include(s => s.Ratings)
+            );
+
+            if (supplier == null)
+                return NotFound("Supplier not found");
+
+            var ratings = supplier.Ratings ?? new List<SupplierRating>();
+
+            var response = new
+            {
+                averageRate = ratings.Any() ? ratings.Average(r => r.Rate) : 0,
+                totalRates = ratings.Count
+            };
+
+            return Ok(response);
+        }
+
+
+        [HttpGet("GetMyWallet")]
+        [Authorize]
+        public async Task<IActionResult> GetMyWallet()
+        {
+            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+            if (string.IsNullOrEmpty(buyerId))
+                return Unauthorized("Invalid token, BuyerId not found");
+
+            var buyer = await _buyerRepo.GetFirstOrDefaultAsync(
+                b => b.Id == int.Parse(buyerId)
+            );
+
+            if (buyer == null)
+                return NotFound("Buyer not found");
+
+            var response = new
+            {
+                buyerId = buyer.Id,
+                walletBalance = buyer.WalletBalance
+            };
+
+            return Ok(response);
+        }
+
+        [HttpGet("getSuppliers")]
+        [Authorize] 
+        public async Task<ActionResult<PagedResponseDto<SupplierDto>>> GetSuppliers(
+        [FromQuery] string? type,
+        [FromQuery] string? name,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10)
+        {
+            if (page < 1 || pageSize < 1)
+                return BadRequest(new { message = "Page number and page size must be greater than zero" });
+
+            try
+            {
+                var suppliersQuery = await _supplierRepo.GetAllAsync(
+                predicate: s => true, 
+                includes: x => x.Ratings
+                );
+
+                if (!string.IsNullOrEmpty(name))
+                {
+                    suppliersQuery = suppliersQuery
+                        .Where(s => !string.IsNullOrEmpty(s.Name) && s.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                }
+
+                if (!string.IsNullOrEmpty(type))
+                {
+                    if (Enum.TryParse<SupplierType>(type, true, out var supplierTypeEnum))
+                    {
+                        suppliersQuery = suppliersQuery
+                            .Where(s => s.SupplierType == supplierTypeEnum)
+                            .ToList();
+                    }
+                }
+
+                var mappedSuppliers = suppliersQuery.Select(s => new SupplierDto
+                {
+                    Id = s.Id,
+                    Email = s.Email,
+                    Name = s.Name,
+                    CommercialName = s.CommercialName,
+                    PhoneNumber = s.PhoneNumber,
+                    SupplierType = s.SupplierType.ToString(),
+                    WarehouseLocation = s.WarehouseLocation,
+                    WarehouseAddress = s.WarehouseAddress,
+                    WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{s.WarehouseImageUrl}",
+                    DeliveryMethod = s.DeliveryMethod,
+                    ProfitPercentage = s.ProfitPercentage,
+                    MinimumOrderPrice = s.MinimumOrderPrice,
+                    MinimumOrderItems = s.MinimumOrderItems,
+                    DeliveryDays = s.DeliveryDays,
+                    WalletBalance = s.WalletBalance,
+                    AverageRating = s.Ratings.Any() ? s.Ratings.Average(r => r.Rate) : 0,
+                    TotalRatings = s.Ratings.Count
+                }).ToList();
+
+                var totalItems = mappedSuppliers.Count;
+                var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+
+                var pagedSuppliers = mappedSuppliers
+                    .OrderBy(s => s.Id)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                var response = new PagedResponseDto<SupplierDto>
+                {
+                    Items = pagedSuppliers,
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalItems = totalItems,
+                    TotalPages = totalPages
+                };
+
+                if (!pagedSuppliers.Any())
+                    return NotFound(new { message = "No suppliers found for the specified criteria." });
+
+                return Ok(new { message = "Suppliers retrieved successfully", data = response });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving suppliers: {ex.Message}");
+            }
         }
 
 
