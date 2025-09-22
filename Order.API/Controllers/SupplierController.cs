@@ -38,6 +38,8 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<SupplierOrderItem> _supplierOrderItemRepo;
         private readonly IGenericRepository<SupplierStatement> _supplierStatementRepo;
         private readonly IGenericRepository<MyOrderItem> _myOrderItemRepo;
+        private readonly IGenericRepository<Buyer> _buyerRepo;
+        private readonly IUnitOfWork _unitOfWork;
 
         public SupplierController(
             IGenericRepository<Supplier> supplierRepo,
@@ -54,7 +56,9 @@ namespace Order.API.Controllers
             IGenericRepository<ReturnOrderItem> returnOrderItemsRepo,
             IGenericRepository<SupplierOrderItem> supplierOrderItemRepo,
             IGenericRepository<SupplierStatement> supplierStatementRepo,
-            IGenericRepository<MyOrderItem> myOrderItemRepo
+            IGenericRepository<MyOrderItem> myOrderItemRepo,
+            IGenericRepository<Buyer> buyerRepo,
+            IUnitOfWork unitOfWork
              )
         {
             _supplierRepo = supplierRepo;
@@ -72,6 +76,8 @@ namespace Order.API.Controllers
             _supplierOrderItemRepo = supplierOrderItemRepo;
             _supplierStatementRepo = supplierStatementRepo;
             _myOrderItemRepo = myOrderItemRepo;
+            _buyerRepo = buyerRepo;
+            _unitOfWork = unitOfWork;
         }
 
         [HttpPost("register")]
@@ -427,6 +433,13 @@ namespace Order.API.Controllers
             if (supplierProduct.SupplierId != int.Parse(supplierId))
                 return Unauthorized("You are not authorized to delete this supplier product.");
 
+            // check if product is used in any order
+            var hasOrders = await _supplierOrderItemRepo
+                           .AnyAsync(o => o.SupplierProductId == supplierProduct.Id);
+
+            if (hasOrders)
+                return BadRequest("Cannot delete this product because it is already used in orders.");
+
             try
             {
                 _supplierProductRepo.Delete(supplierProduct);
@@ -439,6 +452,7 @@ namespace Order.API.Controllers
 
             return Ok(new { message = "Supplier product deleted successfully" });
         }
+
 
         // 6- Toggle Supplier Product Status
         [HttpPut("toggleStatus/{id}")]
@@ -515,6 +529,8 @@ namespace Order.API.Controllers
                 TotalAmount = so.TotalAmount,
                 DeliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
                 Status = so.Status.ToString(),
+                PaymentMethod = so.PaymentMethod,
+                WalletPaymentAmount = so.WalletPaymentAmount,
                 Items = so.Items?.Select(i => new SupplierOrderItemDto
                 {
                     Id = i.Id,
@@ -547,92 +563,111 @@ namespace Order.API.Controllers
             if (string.IsNullOrEmpty(supplierId))
                 return Unauthorized("Supplier ID not found in token.");
 
-            var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
-                so => so.Id == id && so.SupplierId == int.Parse(supplierId),
-                query => query.Include(so => so.Supplier)
-            );
+              await _unitOfWork.BeginTransactionAsync(); 
 
-            if (supplierOrder == null)
-                return NotFound("Supplier order not found or not authorized.");
-
-            if (supplierOrder.Status != OrderStatus.Pending)
-                return BadRequest("Order must be in Pending status before marking as Confirmed.");
-
-            var myOrder = await _myOrderRepo.GetFirstOrDefaultAsync(
-                mo => mo.Id == supplierOrder.MyOrderId,
-                query => query.Include(mo => mo.Items)
-            );
-
-            if (myOrder == null)
-                return NotFound("My order not found for this supplier order.");
-
-            var supplier = supplierOrder.Supplier;
-
-            if (isConfirmed)
+            try
             {
-                supplierOrder.Status = OrderStatus.Confirmed;
-                myOrder.Status = OrderStatus.Confirmed;
+                var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
+                    so => so.Id == id && so.SupplierId == int.Parse(supplierId),
+                    query => query.Include(so => so.Supplier)
+                );
 
-                var profitPercentage = (decimal) supplier.ProfitPercentage / 100m;
-                var commission = supplierOrder.TotalAmount * profitPercentage;
+                if (supplierOrder == null)
+                    return NotFound("Supplier order not found or not authorized.");
 
-                supplier.WalletBalance -= commission;
-                _supplierRepo.Update(supplier);
+                if (supplierOrder.Status != OrderStatus.Pending)
+                    return BadRequest("Order must be in Pending status before marking as Confirmed.");
 
-                var statement = new SupplierStatement
+                var myOrder = await _myOrderRepo.GetFirstOrDefaultAsync(
+                    mo => mo.Id == supplierOrder.MyOrderId,
+                    query => query.Include(mo => mo.Items)
+                );
+
+                if (myOrder == null)
+                    return NotFound("My order not found for this supplier order.");
+
+                var supplier = supplierOrder.Supplier;
+
+                if (isConfirmed)
                 {
-                    SupplierId = supplier.Id,
-                    SupplierOrderId = supplierOrder.Id,
-                    Amount = commission,
-                    Title = "رسوم الطلبية",
-                    BuyerName = supplierOrder.BuyerName,
-                    PropertyName = supplierOrder.PropertyName,
-                    DeliveryDate = supplierOrder.DeliveryDate,
-                    CreatedAt = DateTime.UtcNow
-                };
-                await _supplierStatementRepo.AddAsync(statement);
+                    supplierOrder.Status = OrderStatus.Confirmed;
+                    myOrder.Status = OrderStatus.Confirmed;
 
-                await _supplierRepo.SaveChangesAsync();
-                await _supplierStatementRepo.SaveChangesAsync();
-            }
-            else
-            {
-                supplierOrder.Status = OrderStatus.Canceled;
-                myOrder.Status = OrderStatus.Canceled;
+                    var profitPercentage = (decimal)supplier.ProfitPercentage / 100m;
+                    var commission = supplierOrder.TotalAmount * profitPercentage;
 
-                decimal penalty = supplierOrder.TotalAmount * 0.005m;
+                    supplier.WalletBalance -= commission;
+                    _supplierRepo.Update(supplier);
 
-                supplier.WalletBalance -= penalty;
-                _supplierRepo.Update(supplier);
-
-                var penaltyRecord = new SupplierPenalty
+                    var statement = new SupplierStatement
+                    {
+                        SupplierId = supplier.Id,
+                        SupplierOrderId = supplierOrder.Id,
+                        Amount = commission,
+                        Title = "رسوم الطلبية",
+                        BuyerName = supplierOrder.BuyerName,
+                        PropertyName = supplierOrder.PropertyName,
+                        DeliveryDate = supplierOrder.DeliveryDate,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    await _supplierStatementRepo.AddAsync(statement);
+                }
+                else
                 {
-                    SupplierId = supplier.Id,
-                    SupplierOrderId = supplierOrder.Id,
-                    PenaltyAmount = penalty,
-                    Reason = "الغاء الطلبية",
-                    BuyerName = supplierOrder.BuyerName,
-                    DeliveryDate = supplierOrder.DeliveryDate,
-                    CreatedAt = DateTime.UtcNow
-                };
+                    supplierOrder.Status = OrderStatus.Canceled;
+                    myOrder.Status = OrderStatus.Canceled;
 
-                await _supplierPenaltyRepo.AddAsync(penaltyRecord);
+                    decimal penalty = supplierOrder.TotalAmount * 0.005m;
 
-                await _supplierRepo.SaveChangesAsync();
-                await _supplierPenaltyRepo.SaveChangesAsync();
+                    if (supplierOrder.WalletPaymentAmount > 0)
+                    {
+                        var buyer = await _buyerRepo.GetByIdAsync(supplierOrder.BuyerId);
+                        if (buyer != null)
+                        {
+                            buyer.WalletBalance += supplierOrder.WalletPaymentAmount;
+                            _buyerRepo.Update(buyer);
+                        }
+
+                        supplier.WalletBalance -= supplierOrder.WalletPaymentAmount;
+                    }
+
+                    supplier.WalletBalance -= penalty;
+                    _supplierRepo.Update(supplier);
+
+                    var penaltyRecord = new SupplierPenalty
+                    {
+                        SupplierId = supplier.Id,
+                        SupplierOrderId = supplierOrder.Id,
+                        PenaltyAmount = penalty,
+                        Reason = "الغاء الطلبية",
+                        BuyerName = supplierOrder.BuyerName,
+                        DeliveryDate = supplierOrder.DeliveryDate,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    await _supplierPenaltyRepo.AddAsync(penaltyRecord);
+                }
+
+                _supplierOrderRepo.Update(supplierOrder);
+                _myOrderRepo.Update(myOrder);
+
+               await _unitOfWork.SaveChangesAsync();
+
+                await _unitOfWork.CommitTransactionAsync();
+
+                return Ok(new
+                {
+                    message = $"Order {(isConfirmed ? "confirm" : "cancel")}ed successfully",
+                    status = supplierOrder.Status.ToString()
+                });
             }
-
-            _supplierOrderRepo.Update(supplierOrder);
-            _myOrderRepo.Update(myOrder);
-            await _supplierOrderRepo.SaveChangesAsync();
-            await _myOrderRepo.SaveChangesAsync();
-
-            return Ok(new
+            catch (Exception ex)
             {
-                message = $"Order {(isConfirmed ? "confirm" : "cancel")}ed successfully",
-                status = supplierOrder.Status.ToString()
-            });
+                await _unitOfWork.RollbackTransactionAsync(); 
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
+
 
 
         [HttpPut("supplier-orders/{orderId}/update-quantities")]
@@ -818,6 +853,8 @@ namespace Order.API.Controllers
                 PropertyAddress = so.PropertyAddress,
                 PropertyLocation = so.PropertyLocation,
                 TotalAmount = so.TotalAmount,
+                PaymentMethod = so.PaymentMethod,
+                WalletPaymentAmount = so.WalletPaymentAmount,
                 DeliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
                 Status = so.Status.ToString(),
                 Items = so.Items?.Select(i => new SupplierOrderItemDto
@@ -877,6 +914,8 @@ namespace Order.API.Controllers
                 PropertyAddress = so.PropertyAddress,
                 PropertyLocation = so.PropertyLocation,
                 TotalAmount = so.TotalAmount,
+                PaymentMethod = so.PaymentMethod,
+                WalletPaymentAmount = so.WalletPaymentAmount,
                 DeliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
                 Status = so.Status.ToString(),
                 Items = so.Items?.Select(i => new SupplierOrderItemDto
@@ -936,6 +975,8 @@ namespace Order.API.Controllers
                 PropertyAddress = so.PropertyAddress,
                 PropertyLocation = so.PropertyLocation,
                 TotalAmount = so.TotalAmount,
+                PaymentMethod = so.PaymentMethod,
+                WalletPaymentAmount = so.WalletPaymentAmount,
                 DeliveryDate = so.DeliveryDate.ToString("dd-MM-yyyy"),
                 Status = so.Status.ToString(),
                 Items = so.Items?.Select(i => new SupplierOrderItemDto
@@ -1275,5 +1316,40 @@ namespace Order.API.Controllers
             return Ok(dto);
         }
 
+        [HttpGet("getSupplierRatings/{supplierId}")]
+        [Authorize]
+        public async Task<IActionResult> GetSupplierRatings(int supplierId)
+        {
+            var supplier = await _supplierRepo.GetFirstOrDefaultAsync(
+                           s => s.Id == supplierId,
+                           query => query
+                               .Include(s => s.Ratings)
+                                   .ThenInclude(r => r.Buyer));
+            if (supplier == null)
+                return NotFound(new { Message = "Supplier not found" });
+
+            var response = new SupplierRatingResponseDto
+            {
+                SupplierId = supplier.Id,
+                SupplierName = supplier.Name,
+                SupplierWarehouseImage = $"{_configuration["BaseApiUrl"]}{supplier.WarehouseImageUrl}",
+                AverageRate = supplier.Ratings.Any() ? supplier.Ratings.Average(r => r.Rate) : 0,
+                TotalRates = supplier.Ratings.Count,
+                Ratings = supplier.Ratings.Select(r => new SupplierRatingDto
+                {
+                    Id = r.Id,
+                    BuyerName = r.Buyer?.FullName ?? "anonymous",
+                    Rate = r.Rate,
+                    Comment = r.Comment,
+                    CreatedAt = r.CreatedAt
+                }).ToList()
+            };
+
+            return Ok(new
+            {
+                message = "Ratings retrieved successfully",
+                data = response
+            });
+        }
     }
 }

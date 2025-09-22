@@ -13,6 +13,8 @@ namespace Order.API.Dtos.Supplier
         public decimal TotalAmount { get; set; }
         public string DeliveryDate { get; set; } // formatted
         public string Status { get; set; }
+        public decimal? WalletPaymentAmount { get; set; } = 0;
+        public string? PaymentMethod { get; set; } = string.Empty;
         public List<SupplierOrderItemDto> Items { get; set; } = new();
     }
 }

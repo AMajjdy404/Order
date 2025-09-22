@@ -931,7 +931,7 @@ namespace Order.API.Controllers
                     return NotFound(new { message = $"Supplier with ID {id} not found." });
 
                 var supplierProducts = await _supplierProductRepo.GetAllAsync(
-                    sp => sp.SupplierId == id,
+                    sp => sp.SupplierId == id && sp.Status == Status.Active,
                     sp => sp.Product
                 );
 
@@ -987,7 +987,7 @@ namespace Order.API.Controllers
                     return NotFound(new { message = $"Supplier with ID {id} not found." });
 
                 var supplierProducts = await _supplierProductRepo.GetAllAsync(
-                    sp => sp.SupplierId == id && sp.PriceBefore.HasValue && sp.PriceBefore.Value != 0,
+                    sp => sp.SupplierId == id && sp.PriceBefore.HasValue && sp.PriceBefore.Value != 0 && sp.Status == Status.Active,
                     sp => sp.Product
                 );
 
@@ -1043,7 +1043,7 @@ namespace Order.API.Controllers
                     return NotFound(new { message = $"Supplier with ID {id} not found." });
 
                 var supplierProducts = await _supplierProductRepo.GetAllAsync(
-                    sp => sp.SupplierId == id && (!sp.PriceBefore.HasValue || sp.PriceBefore.Value == 0),
+                    sp => sp.SupplierId == id && (!sp.PriceBefore.HasValue || sp.PriceBefore.Value == 0) && sp.Status == Status.Active,
                     sp => sp.Product
                 );
 
