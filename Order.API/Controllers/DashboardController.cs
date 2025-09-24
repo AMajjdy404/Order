@@ -766,19 +766,19 @@ namespace Order.API.Controllers
                      r.SupplierOrderItem.SupplierOrder.BuyerName.Contains(buyerName)) &&
 
                     // فلترة بالتاريخ (Year / Month / Day)
-                    ((!day.HasValue && !month.HasValue && !year.HasValue) || // لا يوجد فلترة
+                    ((!day.HasValue && !month.HasValue && !year.HasValue) ||
 
                      (year.HasValue && !month.HasValue && !day.HasValue &&
-                      r.ReturnDate.Year == year.Value) || // فلترة بسنة
+                      r.ReturnDate.Year == year.Value) ||
 
                      (year.HasValue && month.HasValue && !day.HasValue &&
                       r.ReturnDate.Year == year.Value &&
-                      r.ReturnDate.Month == month.Value) || // فلترة بسنة وشهر
+                      r.ReturnDate.Month == month.Value) ||
 
                      (year.HasValue && month.HasValue && day.HasValue &&
                       r.ReturnDate.Year == year.Value &&
                       r.ReturnDate.Month == month.Value &&
-                      r.ReturnDate.Day == day.Value)); // فلترة بسنة + شهر + يوم
+                      r.ReturnDate.Day == day.Value));
 
                 var returnOrders = await _returnOrderRepo.GetAllAsync(
                     filter: filter,
@@ -791,35 +791,40 @@ namespace Order.API.Controllers
                 );
 
                 var totalCount = returnOrders.Count();
-                var pagedReturns = returnOrders
+
+                // ✅ Group by SupplierOrderId
+                var groupedReturns = returnOrders
+                    .GroupBy(r => r.SupplierOrderItem.SupplierOrderId)
+                    .Select(g => new GroupedReturnOrderDto
+                    {
+                        SupplierOrderId = g.Key,
+                        OrderDate = g.First().SupplierOrderItem.SupplierOrder.DeliveryDate.ToString("dd-MM-yyyy"),
+                        BuyerName = g.First().SupplierOrderItem.SupplierOrder.BuyerName,
+                        TotalReturnedQuantity = g.Sum(x => x.ReturnedQuantity),
+                        TotalRefundAmount = g.Sum(x => x.ReturnedQuantity * x.SupplierOrderItem.UnitPrice),
+
+                        Items = g.Select(r => new ReturnOrderDto
+                        {
+                            Id = r.Id,
+                            SupplierOrderItemId = r.SupplierOrderItemId,
+                            SupplierOrderId = g.Key, // ✅ added
+                            ReturnedQuantity = r.ReturnedQuantity,
+                            ReturnDate = r.ReturnDate.ToString("dd-MM-yyyy"),
+                            ProductName = r.SupplierOrderItem.ProductName,
+                            UnitPrice = r.SupplierOrderItem.UnitPrice
+                        }).ToList()
+                    })
+                    .OrderByDescending(x => x.OrderDate)
                     .Skip((page - 1) * pageSize)
                     .Take(pageSize)
                     .ToList();
-
-                var returnDtos = pagedReturns.Select(r => new ReturnedOrderDto
-                {
-                    Id = r.Id,
-                    SupplierOrderItemId = r.SupplierOrderItemId,
-                    ProductName = r.SupplierOrderItem.ProductName,
-                    ReturnedQuantity = r.ReturnedQuantity,
-                    ReturnDate = r.ReturnDate,
-
-                    BuyerName = r.SupplierOrderItem.SupplierOrder.BuyerName,
-                    BuyerPhone = r.SupplierOrderItem.SupplierOrder.BuyerPhone,
-                    BuyerPropertyName = r.SupplierOrderItem.SupplierOrder.PropertyName,
-
-                    SupplierId = r.SupplierOrderItem.SupplierOrder.Supplier.Id,
-                    SupplierName = r.SupplierOrderItem.SupplierOrder.Supplier.Name,
-                    SupplierType = r.SupplierOrderItem.SupplierOrder.Supplier.SupplierType.ToString(),
-                    SupplierCommercialName = r.SupplierOrderItem.SupplierOrder.Supplier.CommercialName
-                });
 
                 return Ok(new
                 {
                     TotalCount = totalCount,
                     Page = page,
                     PageSize = pageSize,
-                    Data = returnDtos
+                    Data = groupedReturns
                 });
             }
             catch (Exception ex)
@@ -827,6 +832,7 @@ namespace Order.API.Controllers
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
+
 
 
         [HttpPost("addAdvertisement")]

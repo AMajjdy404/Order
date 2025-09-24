@@ -1619,13 +1619,13 @@ namespace Order.API.Controllers
 
         [HttpGet("myOrders")]
         [Authorize]
-        public async Task<ActionResult> GetMyOrders([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10)
+        public async Task<ActionResult> GetMyOrders([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
         {
             var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(buyerId))
                 return Unauthorized("Buyer ID not found in token.");
 
-            if (pageNumber < 1) pageNumber = 1;
+            if (page < 1) page = 1;
             if (pageSize < 1 || pageSize > 100) pageSize = 10;
 
             var myOrdersQuery = (await _myOrderRepo.GetAllAsync(mo => mo.BuyerId == int.Parse(buyerId)))
@@ -1638,7 +1638,7 @@ namespace Order.API.Controllers
 
             var orders = await myOrdersQuery
                 .OrderByDescending(mo => mo.OrderDate)
-                .Skip((pageNumber - 1) * pageSize)
+                .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .Select(mo => new
                 {
@@ -1661,7 +1661,7 @@ namespace Order.API.Controllers
             var response = new
             {
                 TotalCount = totalCount,
-                PageNumber = pageNumber,
+                PageNumber = page,
                 PageSize = pageSize,
                 TotalPages = (int)Math.Ceiling((double)totalCount / pageSize),
                 Orders = orders

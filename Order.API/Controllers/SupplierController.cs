@@ -1158,27 +1158,41 @@ namespace Order.API.Controllers
                 predicate: r => r.SupplierOrderItem.SupplierOrder.SupplierId == supplierId,
                 orderBy: r => r.ReturnDate,
                 descending: true,
-                includes: r => r.SupplierOrderItem
+                includes: r => r.SupplierOrderItem.SupplierOrder
             );
 
-            var dtoList = paged.Items.Select(r => new ReturnOrderDto
-            {
-                Id = r.Id,
-                SupplierOrderItemId = r.SupplierOrderItemId,
-                ReturnedQuantity = r.ReturnedQuantity,
-                ReturnDate = r.ReturnDate.ToString("dd-MM-yyyy"),
-                ProductName = r.SupplierOrderItem.ProductName
-            }).ToList();
+            // ✅ التجميع بالـ SupplierOrderId
+            var grouped = paged.Items
+                .GroupBy(r => r.SupplierOrderItem.SupplierOrderId)
+                .Select(g => new GroupedReturnOrderDto
+                {
+                    SupplierOrderId = g.Key,
+                    BuyerName = g.First().SupplierOrderItem.SupplierOrder.BuyerName,
+                    OrderDate = g.First().SupplierOrderItem.SupplierOrder.DeliveryDate.ToString("dd-MM-yyyy"),
+                    TotalReturnedQuantity = g.Sum(x => x.ReturnedQuantity),
+                    TotalRefundAmount = g.Sum(x => x.ReturnedQuantity * x.SupplierOrderItem.UnitPrice),
+                    Items = g.Select(r => new ReturnOrderDto
+                    {
+                        Id = r.Id,
+                        SupplierOrderItemId = r.SupplierOrderItemId,
+                        SupplierOrderId = g.Key,
+                        ReturnedQuantity = r.ReturnedQuantity,
+                        ReturnDate = r.ReturnDate.ToString("dd-MM-yyyy"),
+                        ProductName = r.SupplierOrderItem.ProductName,
+                        UnitPrice = r.SupplierOrderItem.UnitPrice
+                    }).ToList()
+                }).ToList();
 
-            return Ok(new PagedResponseDto<ReturnOrderDto>
+            return Ok(new PagedResponseDto<GroupedReturnOrderDto>
             {
-                Items = dtoList,
+                Items = grouped,
                 Page = page,
                 PageSize = pageSize,
                 TotalItems = paged.TotalItems,
                 TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
             });
         }
+
 
         [HttpGet("getSupplierPenalties")]
         [Authorize]
@@ -1222,7 +1236,6 @@ namespace Order.API.Controllers
                 TotalPages = (int)Math.Ceiling((double)paged.TotalItems / pageSize)
             });
         }
-
 
         #endregion
 
