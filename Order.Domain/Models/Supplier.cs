@@ -28,10 +28,12 @@ namespace Order.Domain.Models
         public string WarehouseImageUrl { get; set; }
         public string DeliveryMethod { get; set; }
         public double ProfitPercentage { get; set; } = 1;
-        public decimal MinimumOrderPrice { get; set; }
         public int MinimumOrderItems { get; set; }
         public int DeliveryDays { get; set; }
         public decimal? WalletBalance { get; set; } = 0;
+        public string? DeviceToken { get; set; } = string.Empty;
         public ICollection<SupplierRating> Ratings { get; set; } = new List<SupplierRating>();
+        public ICollection<SupplierDeliveryStation> SupplierDeliveryStations { get; set; }= new List<SupplierDeliveryStation>();
+
     }
 }

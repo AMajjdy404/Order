@@ -17,7 +17,7 @@ namespace Order.Infrastructure.Data
             // Products Seeding
             if (!await context.Products.AnyAsync())
             {
-                var productData = await File.ReadAllTextAsync("../Order.Infrastructure/Data/DataSeed/products.json");
+                var productData = await File.ReadAllTextAsync("../Order.Infrastructure/Data/DataSeed/orderProducts.json");
                 var products = JsonSerializer.Deserialize<List<Product>>(productData, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
@@ -29,10 +29,27 @@ namespace Order.Infrastructure.Data
                         await context.Set<Product>().AddAsync(product);
                     }
                     await context.SaveChangesAsync();
+                    Console.WriteLine(products.Count);
                 }
             }
 
-            
+            // Delivery Station Seeding
+            if (!await context.DeliveryStations.AnyAsync())
+            {
+                var DeliveryStationData = await File.ReadAllTextAsync("../Order.Infrastructure/Data/DataSeed/DeliveryStation.json");
+                var deliveryStations = JsonSerializer.Deserialize<List<DeliveryStation>>(DeliveryStationData, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+                if (deliveryStations?.Count > 0)
+                {
+                    foreach (var deliveryStation in deliveryStations)
+                    {
+                        await context.Set<DeliveryStation>().AddAsync(deliveryStation);
+                    }
+                    await context.SaveChangesAsync();
+                }
+            }
         }
     }
 }

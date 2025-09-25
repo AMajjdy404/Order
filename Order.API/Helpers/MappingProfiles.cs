@@ -27,15 +27,13 @@ namespace Order.API.Helpers
            .ForMember(d => d.WarehouseImageUrl, o => o.Ignore())
            .ForMember(d => d.Password, o => o.Ignore())
            .ForMember(d => d.ProfitPercentage, o => o.Ignore())
-           .ForMember(dest => dest.SupplierType, opt => opt.MapFrom(src => Enum.Parse<SupplierType>(src.SupplierType)))
-           .ForMember(dest => dest.MinimumOrderPrice, opt => opt.MapFrom(src => src.MinimumOrderPrice))
+           .ForMember(dest => dest.SupplierType, opt => opt.MapFrom(src => Enum.Parse<SupplierType>(src.SupplierType))) 
            .ForMember(dest => dest.MinimumOrderItems, opt => opt.MapFrom(src => src.MinimumOrderItems));
             
 
             CreateMap<Supplier, SupplierToReturnDto>()
                 .ForMember(d => d.WarehouseImageUrl, o => o.MapFrom<SupplierWarehousePictureUrlResolver>())
                 .ForMember(dest => dest.SupplierType, opt => opt.MapFrom(src => src.SupplierType.ToString()))
-                    .ForMember(dest => dest.MinimumOrderPrice, opt => opt.MapFrom(src => src.MinimumOrderPrice))
                     .ForMember(dest => dest.MinimumOrderItems, opt => opt.MapFrom(src => src.MinimumOrderItems));
 
             CreateMap<PagedResult<Buyer>, PagedResult<BuyerToReturnDto>>()

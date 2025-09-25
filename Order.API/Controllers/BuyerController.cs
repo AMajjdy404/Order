@@ -16,6 +16,7 @@ using Order.Domain.Interfaces;
 using Order.Domain.Models;
 using Order.Domain.Services;
 using Order.Infrastructure.Data;
+using Order.Infrastructure.Implementation;
 
 
 namespace Order.API.Controllers
@@ -41,6 +42,7 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<ReferralCode> _referralCodeRepo;
         private readonly IGenericRepository<Advertisement> _advertisementRepo;
         private readonly IGenericRepository<SupplierRating> _supplierRatingRepo;
+        private readonly IUnitOfWork _unitOfWork;
 
         public BuyerController(
             IGenericRepository<Buyer> buyerRepo,
@@ -59,7 +61,8 @@ namespace Order.API.Controllers
              IGenericRepository<MyOrder> myOrderRepo,
              IGenericRepository<ReferralCode> referralCodeRepo,
              IGenericRepository<Advertisement> advertisementRepo,
-             IGenericRepository<SupplierRating> supplierRatingRepo
+             IGenericRepository<SupplierRating> supplierRatingRepo,
+             IUnitOfWork unitOfWork
 
 
             )
@@ -80,6 +83,7 @@ namespace Order.API.Controllers
             _referralCodeRepo = referralCodeRepo;
             _advertisementRepo = advertisementRepo;
             _supplierRatingRepo = supplierRatingRepo;
+            _unitOfWork = unitOfWork;
         }
 
         [HttpPost("register")]
@@ -109,6 +113,7 @@ namespace Order.API.Controllers
             buyer.Password = _passwordHasher.HashPassword(buyer, registerDto.Password);
             buyer.PropertyInsideImagePath = insideImagePath;
             buyer.PropertyOutsideImagePath = outsideImagePath;
+            buyer.DeliveryStationId = registerDto.DeliveryStationId;
             buyer.IsActive = false;
             buyer.WalletBalance += 1000;
 
@@ -1094,74 +1099,92 @@ namespace Order.API.Controllers
             if (buyer == null)
                 return NotFound("Buyer not found.");
 
-            var pendingOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
-                bo => bo.BuyerId == int.Parse(buyerId),
-                query => query.Include(bo => bo.OrderItems)
-            );
-
-            if (pendingOrder == null)
+            await _unitOfWork.BeginTransactionAsync();
+            try
             {
-                pendingOrder = new BuyerOrder
+                var pendingOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
+                    bo => bo.BuyerId == int.Parse(buyerId),
+                    query => query.Include(bo => bo.OrderItems)
+                );
+
+                // لو مفيش pending order → اعمل جديد
+                if (pendingOrder == null)
                 {
-                    BuyerId = int.Parse(buyerId),
-                    OrderDate = DateTime.Now,
-                    TotalAmount = 0
-                };
-                await _buyerOrderRepo.AddAsync(pendingOrder);
-                await _buyerOrderRepo.SaveChangesAsync();
-            }
-
-            decimal totalAmount = pendingOrder.TotalAmount;
-            var orderItems = new List<OrderItem>();
-
-            foreach (var item in orderDto.Items)
-            {
-                var supplierProduct = await _supplierProductRepo.GetByIdAsync(item.SupplierProductId);
-                if (supplierProduct == null || !supplierProduct.IsAvailable)
-                    return NotFound($"Supplier product with ID {item.SupplierProductId} not found or not available.");
-
-                if (supplierProduct.Quantity < item.Quantity)
-                    return BadRequest($"Insufficient quantity for product {item.SupplierProductId}.");
-
-                // التحقق من MaxOrderLimit (معاملة ك-int، وتحقق لو أكبر من صفر)
-                var existingQuantity = pendingOrder.OrderItems?.Where(oi => oi.SupplierProductId == item.SupplierProductId).Sum(oi => oi.Quantity) ?? 0;
-                if (supplierProduct.MaxOrderLimit > 0 && (existingQuantity + item.Quantity) > supplierProduct.MaxOrderLimit)
-                    return BadRequest($"Maximum order limit of {supplierProduct.MaxOrderLimit} exceeded for product {item.SupplierProductId}. Current: {existingQuantity}, Requested: {item.Quantity}");
-
-                var existingItem = pendingOrder.OrderItems?.FirstOrDefault(oi => oi.SupplierProductId == item.SupplierProductId);
-                if (existingItem != null)
-                {
-                    existingItem.Quantity += item.Quantity;
-                    totalAmount += supplierProduct.PriceNow * item.Quantity;
-                    _orderItemRepo.Update(existingItem);
-                }
-                else
-                {
-                    var orderItem = new OrderItem
+                    pendingOrder = new BuyerOrder
                     {
-                        SupplierProductId = item.SupplierProductId,
-                        Quantity = item.Quantity,
-                        UnitPrice = supplierProduct.PriceNow,
-                        BuyerOrderId = pendingOrder.Id
+                        BuyerId = int.Parse(buyerId),
+                        OrderDate = DateTime.Now,
+                        TotalAmount = 0
                     };
-                    orderItems.Add(orderItem);
-                    totalAmount += supplierProduct.PriceNow * item.Quantity;
+                    await _buyerOrderRepo.AddAsync(pendingOrder);
+                    await _unitOfWork.SaveChangesAsync(); // ✅ لازم نسيڤ الأول عشان يتولد الـ Id
                 }
-            }
 
-            await _orderItemRepo.SaveChangesAsync();
-            foreach (var orderItem in orderItems)
+                decimal totalAmount = pendingOrder.TotalAmount;
+
+                foreach (var item in orderDto.Items)
+                {
+                    var supplierProduct = await _supplierProductRepo.GetFirstOrDefaultAsync(
+                        sp => sp.Id == item.SupplierProductId,
+                        query => query.Include(sp => sp.Supplier)
+                                      .ThenInclude(s => s.SupplierDeliveryStations)
+                    );
+
+                    if (supplierProduct == null || !supplierProduct.IsAvailable)
+                        return NotFound($"Supplier product with ID {item.SupplierProductId} not found or not available.");
+
+                    if (supplierProduct.Quantity < item.Quantity)
+                        return BadRequest($"Insufficient quantity for product {item.SupplierProductId}.");
+
+                    var supplierArea = supplierProduct.Supplier.SupplierDeliveryStations
+                        .FirstOrDefault(a => a.DeliveryStationId == buyer.DeliveryStationId);
+
+                    if (supplierArea == null)
+                        return BadRequest($"Supplier {supplierProduct.Supplier.Name} does not deliver to your area.");
+
+                    var existingQuantity = pendingOrder.OrderItems?
+                        .Where(oi => oi.SupplierProductId == item.SupplierProductId)
+                        .Sum(oi => oi.Quantity) ?? 0;
+
+                    if (supplierProduct.MaxOrderLimit > 0 && (existingQuantity + item.Quantity) > supplierProduct.MaxOrderLimit)
+                        return BadRequest($"Maximum order limit of {supplierProduct.MaxOrderLimit} exceeded for product {item.SupplierProductId}.");
+
+                    var existingItem = pendingOrder.OrderItems?.FirstOrDefault(oi => oi.SupplierProductId == item.SupplierProductId);
+                    if (existingItem != null)
+                    {
+                        existingItem.Quantity += item.Quantity;
+                        totalAmount += supplierProduct.PriceNow * item.Quantity;
+                        _orderItemRepo.Update(existingItem);
+                    }
+                    else
+                    {
+                        var orderItem = new OrderItem
+                        {
+                            SupplierProductId = item.SupplierProductId,
+                            Quantity = item.Quantity,
+                            UnitPrice = supplierProduct.PriceNow,
+                            BuyerOrderId = pendingOrder.Id
+                        };
+                        await _orderItemRepo.AddAsync(orderItem);
+                        totalAmount += supplierProduct.PriceNow * item.Quantity;
+                    }
+                }
+
+                pendingOrder.TotalAmount = totalAmount;
+
+                // ✅ مش محتاج Update هنا لأن pendingOrder متتبع (Tracked) بالفعل
+                await _unitOfWork.SaveChangesAsync();
+                await _unitOfWork.CommitTransactionAsync();
+
+                return Ok(new { message = "Item(s) added to cart successfully.", totalAmount = pendingOrder.TotalAmount });
+            }
+            catch
             {
-                await _orderItemRepo.AddAsync(orderItem);
+                await _unitOfWork.RollbackTransactionAsync();
+                throw;
             }
-            await _orderItemRepo.SaveChangesAsync();
-
-            pendingOrder.TotalAmount = totalAmount;
-            _buyerOrderRepo.Update(pendingOrder);
-            await _buyerOrderRepo.SaveChangesAsync();
-
-            return Ok(new { message = "Item(s) added to cart successfully.", totalAmount = pendingOrder.TotalAmount });
         }
+
 
         [HttpDelete("removeFromCart/{cartItemId}")]
         [Authorize]
@@ -1318,62 +1341,9 @@ namespace Order.API.Controllers
             if (string.IsNullOrEmpty(buyerId))
                 return Unauthorized("Buyer ID not found in token.");
 
-            var pendingOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
-            bo => bo.BuyerId == int.Parse(buyerId),
-            query => query
-                .Include(bo => bo.OrderItems)
-                    .ThenInclude(oi => oi.SupplierProduct)
-                        .ThenInclude(sp => sp.Product)
-                .Include(bo => bo.OrderItems)
-                    .ThenInclude(oi => oi.SupplierProduct)
-                        .ThenInclude(sp => sp.Supplier)
-            );
-
-
-            if (pendingOrder == null || pendingOrder.OrderItems == null || !pendingOrder.OrderItems.Any())
-                return NotFound("No pending order found.");
-
-            var cartSuppliers = pendingOrder.OrderItems
-                .Where(oi => oi.SupplierProduct != null && oi.SupplierProduct.Supplier != null)
-                .GroupBy(oi => oi.SupplierProduct.Supplier)
-                .Select(g => new CartSupplierDto
-                {
-                    Supplier = _mapper.Map<SupplierDto>(g.Key),
-                    Items = g.Select(oi => new CartItemDto
-                    {
-                        Id = oi.Id,
-                        SupplierProductId = oi.SupplierProductId,
-                        ProductName = oi.SupplierProduct?.Product?.Name ?? "Unknown Product",
-                        Quantity = oi.Quantity,
-                        UnitPrice = oi.UnitPrice,
-                        TotalPrice = oi.Quantity * oi.UnitPrice
-                    }).ToList(),
-                    TotalPrice = g.Sum(oi => oi.Quantity * oi.UnitPrice),
-                    TotalItems = g.Count(),
-                    MinimumOrderPrice = g.Key.MinimumOrderPrice,
-                    MinimumOrderPriceProgress = $"{g.Sum(oi => oi.Quantity * oi.UnitPrice)}/{g.Key.MinimumOrderPrice}",
-                    MinimumOrderItems = g.Key.MinimumOrderItems,
-                    MinimumOrderItemsProgress = $"{g.Count()}/{g.Key.MinimumOrderItems}",
-                    IsValid = (g.Sum(oi => oi.Quantity * oi.UnitPrice) >= g.Key.MinimumOrderPrice) && (g.Count() >= g.Key.MinimumOrderItems)
-                }).ToList();
-
-            var cartDto = new CartDto
-            {
-                OrderId = pendingOrder.Id,
-                Suppliers = cartSuppliers,
-                GrandTotal = pendingOrder.TotalAmount
-            };
-
-            return Ok(new { message = "Cart retrieved successfully", Data = cartDto });
-        }
-
-        [HttpGet("cartForSupplier/{supplierId}")]
-        [Authorize]
-        public async Task<ActionResult<CartDto>> GetSupplierCart(int supplierId)
-        {
-            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(buyerId))
-                return Unauthorized("Buyer ID not found in token.");
+            var buyer = await _buyerRepo.GetByIdAsync(int.Parse(buyerId));
+            if (buyer == null)
+                return NotFound("Buyer not found.");
 
             var pendingOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
                 bo => bo.BuyerId == int.Parse(buyerId),
@@ -1384,6 +1354,105 @@ namespace Order.API.Controllers
                     .Include(bo => bo.OrderItems)
                         .ThenInclude(oi => oi.SupplierProduct)
                             .ThenInclude(sp => sp.Supplier)
+                                .ThenInclude(s => s.SupplierDeliveryStations)
+            );
+
+            if (pendingOrder == null || pendingOrder.OrderItems == null || !pendingOrder.OrderItems.Any())
+                return NotFound("No pending order found.");
+
+            var cartSuppliers = pendingOrder.OrderItems
+                .Where(oi => oi.SupplierProduct != null && oi.SupplierProduct.Supplier != null)
+                .GroupBy(oi => oi.SupplierProduct.Supplier)
+                .Select(g =>
+                {
+                    var supplier = g.Key;
+                    var supplierArea = supplier.SupplierDeliveryStations
+                        .FirstOrDefault(a => a.DeliveryStationId == buyer.DeliveryStationId);
+
+                    // عدد المنتجات المختلفة (مش الكميات)
+                    var distinctItemsCount = g.Count();
+
+                    // إجمالي السعر
+                    var totalPrice = g.Sum(oi => oi.Quantity * oi.UnitPrice);
+
+                    if (supplierArea == null)
+                    {
+                        return new CartSupplierDto
+                        {
+                            Supplier = _mapper.Map<SupplierDto>(supplier),
+                            Items = g.Select(oi => new CartItemDto
+                            {
+                                Id = oi.Id,
+                                SupplierProductId = oi.SupplierProductId,
+                                ProductName = oi.SupplierProduct?.Product?.Name ?? "Unknown Product",
+                                Quantity = oi.Quantity,
+                                UnitPrice = oi.UnitPrice,
+                                TotalPrice = oi.Quantity * oi.UnitPrice
+                            }).ToList(),
+                            TotalPrice = totalPrice,
+                            TotalItems = distinctItemsCount, // ✅ عدد المنتجات المختلفة
+                            MinimumOrderItems = supplier.MinimumOrderItems,
+                            MinimumOrderItemsProgress = $"{distinctItemsCount}/{supplier.MinimumOrderItems}", // ✅
+                            MinimumOrderPriceProgress = "Not Deliverable",
+                            IsValid = false
+                        };
+                    }
+
+                    return new CartSupplierDto
+                    {
+                        Supplier = _mapper.Map<SupplierDto>(supplier),
+                        Items = g.Select(oi => new CartItemDto
+                        {
+                            Id = oi.Id,
+                            SupplierProductId = oi.SupplierProductId,
+                            ProductName = oi.SupplierProduct?.Product?.Name ?? "Unknown Product",
+                            Quantity = oi.Quantity,
+                            UnitPrice = oi.UnitPrice,
+                            TotalPrice = oi.Quantity * oi.UnitPrice
+                        }).ToList(),
+                        TotalPrice = totalPrice,
+                        TotalItems = distinctItemsCount, // ✅ عدد المنتجات المختلفة
+                        MinimumOrderItems = supplier.MinimumOrderItems,
+                        MinimumOrderItemsProgress = $"{distinctItemsCount}/{supplier.MinimumOrderItems}", // ✅
+                        MinimumOrderPriceProgress = $"{totalPrice:F2}/{supplierArea.MinimumOrderPrice:F2}",
+                        IsValid = (totalPrice >= supplierArea.MinimumOrderPrice) &&
+                                  (distinctItemsCount >= supplier.MinimumOrderItems)
+                    };
+                }).ToList();
+
+            var cartDto = new CartDto
+            {
+                OrderId = pendingOrder.Id,
+                Suppliers = cartSuppliers,
+                GrandTotal = cartSuppliers.Sum(s => s.TotalPrice) // ✅ يتجمع من كل الموردين
+            };
+
+            return Ok(new { message = "Cart retrieved successfully", data = cartDto });
+        }
+
+
+        [HttpGet("cartForSupplier/{supplierId}")]
+        [Authorize]
+        public async Task<ActionResult<CartDto>> GetSupplierCart(int supplierId)
+        {
+            var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(buyerId))
+                return Unauthorized("Buyer ID not found in token.");
+
+            var buyer = await _buyerRepo.GetByIdAsync(int.Parse(buyerId));
+            if (buyer == null)
+                return NotFound("Buyer not found.");
+
+            var pendingOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
+                bo => bo.BuyerId == int.Parse(buyerId),
+                query => query
+                    .Include(bo => bo.OrderItems)
+                        .ThenInclude(oi => oi.SupplierProduct)
+                            .ThenInclude(sp => sp.Product)
+                    .Include(bo => bo.OrderItems)
+                        .ThenInclude(oi => oi.SupplierProduct)
+                            .ThenInclude(sp => sp.Supplier)
+                                .ThenInclude(s => s.SupplierDeliveryStations)
             );
 
             if (pendingOrder == null)
@@ -1415,7 +1484,7 @@ namespace Order.API.Controllers
             {
                 new CartSupplierDto
                 {
-                    Supplier = null, // or you can _mapper.Map<SupplierDto>(...) لو عايز بيانات المورد
+                    Supplier = null,
                     Items = new List<CartItemDto>(),
                     TotalPrice = 0,
                     TotalItems = 0,
@@ -1432,10 +1501,21 @@ namespace Order.API.Controllers
                 return Ok(new { message = "No items found for this supplier in the cart", Data = emptyCart });
             }
 
-            // Supplier cart with items
+            var supplier = supplierGroup.Key;
+
+            // ✅ هات سعر الحد الأدنى الخاص بمنطقة المشتري
+            var supplierStation = supplier.SupplierDeliveryStations
+                .FirstOrDefault(sds => sds.DeliveryStationId == buyer.DeliveryStationId);
+
+            if (supplierStation == null)
+                return BadRequest($"Supplier {supplier.Name} does not deliver to your area.");
+
+            var totalPrice = supplierGroup.Sum(oi => oi.Quantity * oi.UnitPrice);
+            var totalItems = supplierGroup.Sum(oi => oi.Quantity);
+
             var supplierCart = new CartSupplierDto
             {
-                Supplier = _mapper.Map<SupplierDto>(supplierGroup.Key),
+                Supplier = _mapper.Map<SupplierDto>(supplier),
                 Items = supplierGroup.Select(oi => new CartItemDto
                 {
                     Id = oi.Id,
@@ -1445,14 +1525,20 @@ namespace Order.API.Controllers
                     UnitPrice = oi.UnitPrice,
                     TotalPrice = oi.Quantity * oi.UnitPrice
                 }).ToList(),
-                TotalPrice = supplierGroup.Sum(oi => oi.Quantity * oi.UnitPrice),
-                TotalItems = supplierGroup.Count(),
-                MinimumOrderPrice = supplierGroup.Key.MinimumOrderPrice,
-                MinimumOrderPriceProgress = $"{supplierGroup.Sum(oi => oi.Quantity * oi.UnitPrice)}/{supplierGroup.Key.MinimumOrderPrice}",
-                MinimumOrderItems = supplierGroup.Key.MinimumOrderItems,
-                MinimumOrderItemsProgress = $"{supplierGroup.Count()}/{supplierGroup.Key.MinimumOrderItems}",
-                IsValid = (supplierGroup.Sum(oi => oi.Quantity * oi.UnitPrice) >= supplierGroup.Key.MinimumOrderPrice) &&
-                          (supplierGroup.Count() >= supplierGroup.Key.MinimumOrderItems)
+                TotalPrice = totalPrice,
+                TotalItems = totalItems,
+
+                // ✅ السعر من SupplierDeliveryStation
+                MinimumOrderPrice = supplierStation.MinimumOrderPrice,
+                MinimumOrderPriceProgress = $"{totalPrice}/{supplierStation.MinimumOrderPrice}",
+
+                // ✅ عدد المنتجات من Supplier
+                MinimumOrderItems = supplier.MinimumOrderItems,
+                MinimumOrderItemsProgress = $"{totalItems}/{supplier.MinimumOrderItems}",
+
+                // ✅ التحقق من الشرطين
+                IsValid = (totalPrice >= supplierStation.MinimumOrderPrice) &&
+                          (totalItems >= supplier.MinimumOrderItems)
             };
 
             var cartDto = new CartDto
@@ -1466,7 +1552,6 @@ namespace Order.API.Controllers
         }
 
 
-
         [HttpPost("confirmOrder")]
         [Authorize]
         public async Task<ActionResult> ConfirmOrder([FromBody] ConfirmOrderDto confirmDto)
@@ -1475,145 +1560,172 @@ namespace Order.API.Controllers
             if (string.IsNullOrEmpty(buyerId))
                 return Unauthorized("Buyer ID not found in token.");
 
-            var pendingOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
-                bo => bo.BuyerId == int.Parse(buyerId),
-                query => query
-                    .Include(bo => bo.OrderItems)
-                        .ThenInclude(oi => oi.SupplierProduct)
-                            .ThenInclude(sp => sp.Product)
-                    .Include(bo => bo.OrderItems)
-                        .ThenInclude(oi => oi.SupplierProduct)
-                            .ThenInclude(sp => sp.Supplier)
-            );
+            await _unitOfWork.BeginTransactionAsync();
 
-            if (pendingOrder == null)
-                return NotFound("No pending order found.");
-
-            var totalOrderAmount = pendingOrder.OrderItems.Sum(oi => oi.Quantity * oi.UnitPrice);
-            var buyer = await _buyerRepo.GetByIdAsync(int.Parse(buyerId));
-            if (buyer == null)
-                return NotFound("Buyer not found.");
-
-            decimal walletAmount = 0;
-
-            // ✅ لو المشتري اختار UseWallet
-            if (confirmDto.UseWallet)
+            try
             {
-                walletAmount = totalOrderAmount * 0.01m; // 1%
-                if (walletAmount > buyer.WalletBalance)
-                    return BadRequest("Insufficient wallet balance.");
-            }
+                var buyer = await _buyerRepo.GetByIdAsync(int.Parse(buyerId));
+                if (buyer == null)
+                    return NotFound("Buyer not found.");
 
-            var currentDateTime = DateTime.UtcNow;
-            var currentDate = DateOnly.FromDateTime(currentDateTime);
-            var minDeliveryDate = currentDate.AddDays(1);
+                var pendingOrder = await _buyerOrderRepo.GetFirstOrDefaultAsync(
+                    bo => bo.BuyerId == int.Parse(buyerId),
+                    include: q => q
+                        .Include(bo => bo.OrderItems)
+                            .ThenInclude(oi => oi.SupplierProduct)
+                                .ThenInclude(sp => sp.Product)
+                        .Include(bo => bo.OrderItems)
+                            .ThenInclude(oi => oi.SupplierProduct)
+                                .ThenInclude(sp => sp.Supplier)
+                                    .ThenInclude(s => s.SupplierDeliveryStations)
+                                        .ThenInclude(da => da.DeliveryStation)
+                );
 
-            var supplierGroups = pendingOrder.OrderItems.GroupBy(oi => oi.SupplierProduct.Supplier);
-            foreach (var group in supplierGroups)
-            {
-                var minDateForSupplier = currentDate.AddDays(group.Key.DeliveryDays);
-                if (minDeliveryDate < minDateForSupplier)
-                    minDeliveryDate = minDateForSupplier;
-            }
+                if (pendingOrder == null)
+                    return NotFound("No pending order found.");
 
-            if (confirmDto.DeliveryDate < minDeliveryDate)
-                return BadRequest($"Delivery date must be at least {minDeliveryDate:dd-MM-yyyy}.");
+                var totalOrderAmount = pendingOrder.OrderItems.Sum(oi => oi.Quantity * oi.UnitPrice);
 
-            var remainingAmount = totalOrderAmount - walletAmount;
-
-            var orderDate = DateOnly.FromDateTime(currentDateTime);
-            var myOrder = new MyOrder
-            {
-                Status = OrderStatus.Pending,
-                DeliveryDate = confirmDto.DeliveryDate,
-                OrderDate = orderDate,
-                BuyerOrderId = pendingOrder.Id,
-                BuyerId = int.Parse(buyerId),
-                TotalAmount = totalOrderAmount
-            };
-
-            foreach (var orderItem in pendingOrder.OrderItems)
-            {
-                myOrder.Items.Add(new MyOrderItem
+                decimal walletAmount = 0;
+                if (confirmDto.UseWallet)
                 {
-                    SupplierProductId = orderItem.SupplierProductId,
-                    ProductName = orderItem.SupplierProduct?.Product?.Name ?? "Unknown Product",
-                    Quantity = orderItem.Quantity,
-                    UnitPrice = orderItem.UnitPrice,
-                    SupplierName = orderItem.SupplierProduct?.Supplier?.Name ?? "Unknown Supplier"
-                });
+                    walletAmount = totalOrderAmount * 0.01m;
+                    if (walletAmount > buyer.WalletBalance)
+                        return BadRequest("Insufficient wallet balance.");
+                }
 
-                orderItem.SupplierProduct.Quantity -= orderItem.Quantity;
-                _supplierProductRepo.Update(orderItem.SupplierProduct);
-            }
+                var currentDateTime = DateTime.UtcNow;
+                var currentDate = DateOnly.FromDateTime(currentDateTime);
+                var minDeliveryDate = currentDate.AddDays(1);
 
-            await _myOrderRepo.AddAsync(myOrder);
-            await _myOrderRepo.SaveChangesAsync();
-
-            foreach (var group in supplierGroups)
-            {
-                var totalPrice = group.Sum(oi => oi.Quantity * oi.UnitPrice);
-                var totalItems = group.Count();
-
-                if (totalPrice < group.Key.MinimumOrderPrice || totalItems < group.Key.MinimumOrderItems)
-                    return BadRequest($"Order for supplier {group.Key.Name} does not meet minimum requirements.");
-
-                // ✅ توزيع نسبة المحفظة على المورد
-                var walletPaymentAmount = confirmDto.UseWallet ? (totalPrice * 0.01m) : 0;
-
-                var supplierOrder = new SupplierOrder
+                var supplierGroups = pendingOrder.OrderItems.GroupBy(oi => oi.SupplierProduct.Supplier);
+                foreach (var group in supplierGroups)
                 {
-                    SupplierId = group.Key.Id,
-                    MyOrderId = myOrder.Id,
-                    TotalAmount = totalPrice - walletPaymentAmount,
-                    DeliveryDate = confirmDto.DeliveryDate,
-                    PaymentMethod = confirmDto.UseWallet ? "Wallet+Cash" : "Cash",
+                    var minDateForSupplier = currentDate.AddDays(group.Key.DeliveryDays);
+                    if (minDeliveryDate < minDateForSupplier)
+                        minDeliveryDate = minDateForSupplier;
+                }
+
+                if (confirmDto.DeliveryDate < minDeliveryDate)
+                    return BadRequest($"Delivery date must be at least {minDeliveryDate:dd-MM-yyyy}.");
+
+                var remainingAmount = totalOrderAmount - walletAmount;
+
+                // ✅ إنشاء MyOrder
+                var orderDate = DateOnly.FromDateTime(currentDateTime);
+                var myOrder = new MyOrder
+                {
                     Status = OrderStatus.Pending,
+                    DeliveryDate = confirmDto.DeliveryDate,
+                    OrderDate = orderDate,
+                    BuyerOrderId = pendingOrder.Id,
                     BuyerId = int.Parse(buyerId),
-                    BuyerName = buyer.FullName,
-                    BuyerPhone = buyer.PhoneNumber,
-                    PropertyName = buyer.PropertyName,
-                    PropertyAddress = buyer.PropertyAddress,
-                    PropertyLocation = buyer.PropertyLocation,
-                    Notes = confirmDto.Notes ?? "",
-                    Items = group.Select(oi => new SupplierOrderItem
-                    {
-                        SupplierProductId = oi.SupplierProductId,
-                        ProductName = oi.SupplierProduct.Product.Name,
-                        Quantity = oi.Quantity,
-                        UnitPrice = oi.UnitPrice
-                    }).ToList(),
-                    WalletPaymentAmount = walletPaymentAmount
+                    TotalAmount = totalOrderAmount,
+                    Items = new List<MyOrderItem>()
                 };
 
-                await _supplierOrderRepo.AddAsync(supplierOrder);
-
-                // ✅ أضفنا للمورد رصيد المحفظة
-                if (walletPaymentAmount > 0)
+                foreach (var orderItem in pendingOrder.OrderItems)
                 {
-                    group.Key.WalletBalance += walletPaymentAmount;
-                    _supplierRepo.Update(group.Key);
+                    myOrder.Items.Add(new MyOrderItem
+                    {
+                        SupplierProductId = orderItem.SupplierProductId,
+                        ProductName = orderItem.SupplierProduct?.Product?.Name ?? "Unknown Product",
+                        Quantity = orderItem.Quantity,
+                        UnitPrice = orderItem.UnitPrice,
+                        SupplierName = orderItem.SupplierProduct?.Supplier?.Name ?? "Unknown Supplier"
+                    });
+
+                    orderItem.SupplierProduct.Quantity -= orderItem.Quantity;
+                    _supplierProductRepo.Update(orderItem.SupplierProduct);
                 }
+
+                await _myOrderRepo.AddAsync(myOrder);
+
+                // ✅ لازم أحفظ هنا علشان يتولد الـ Id بتاع MyOrder
+                await _unitOfWork.SaveChangesAsync();
+
+                // ✅ إنشاء SupplierOrder لكل مورد
+                foreach (var group in supplierGroups)
+                {
+                    var supplier = group.Key;
+                    var buyerStationId = buyer.DeliveryStationId;
+
+                    var supplierArea = supplier.SupplierDeliveryStations
+                        .FirstOrDefault(a => a.DeliveryStationId == buyerStationId);
+
+                    if (supplierArea == null)
+                        return BadRequest($"Supplier {supplier.Name} does not deliver to buyer’s area.");
+
+                    var totalPrice = group.Sum(oi => oi.Quantity * oi.UnitPrice);
+
+                    if (totalPrice < supplierArea.MinimumOrderPrice)
+                        return BadRequest(
+                            $"Order for supplier {supplier.Name} does not meet minimum order price ({supplierArea.MinimumOrderPrice})."
+                        );
+
+                    var walletPaymentAmount = confirmDto.UseWallet ? (totalPrice * 0.01m) : 0;
+
+                    var supplierOrder = new SupplierOrder
+                    {
+                        SupplierId = supplier.Id,
+                        MyOrderId = myOrder.Id, // ✅ دلوقتي عنده قيمة
+                        TotalAmount = totalPrice - walletPaymentAmount,
+                        DeliveryDate = confirmDto.DeliveryDate,
+                        PaymentMethod = confirmDto.UseWallet ? "Wallet+Cash" : "Cash",
+                        Status = OrderStatus.Pending,
+                        BuyerId = buyer.Id,
+                        BuyerName = buyer.FullName,
+                        BuyerPhone = buyer.PhoneNumber,
+                        PropertyName = buyer.PropertyName,
+                        PropertyAddress = buyer.PropertyAddress,
+                        PropertyLocation = buyer.PropertyLocation,
+                        Notes = confirmDto.Notes ?? "",
+                        Items = group.Select(oi => new SupplierOrderItem
+                        {
+                            SupplierProductId = oi.SupplierProductId,
+                            ProductName = oi.SupplierProduct.Product.Name,
+                            Quantity = oi.Quantity,
+                            UnitPrice = oi.UnitPrice
+                        }).ToList(),
+                        WalletPaymentAmount = walletPaymentAmount
+                    };
+
+                    await _supplierOrderRepo.AddAsync(supplierOrder);
+
+                    if (walletPaymentAmount > 0)
+                    {
+                        supplier.WalletBalance += walletPaymentAmount;
+                        _supplierRepo.Update(supplier);
+                    }
+                }
+
+                // ✅ خصم من المشتري
+                if (walletAmount > 0)
+                {
+                    buyer.WalletBalance -= walletAmount;
+                    _buyerRepo.Update(buyer);
+                }
+
+                _buyerOrderRepo.Delete(pendingOrder);
+
+                // ✅ Save Changes مرة واحدة للباقي
+                await _unitOfWork.SaveChangesAsync();
+
+                await _unitOfWork.CommitTransactionAsync();
+
+                return Ok(new
+                {
+                    message = "Order confirmed successfully",
+                    usedWallet = confirmDto.UseWallet,
+                    walletAmount = walletAmount,
+                    remainingAmount = remainingAmount
+                });
             }
-
-            // ✅ خصم من المشتري
-            if (walletAmount > 0)
+            catch (Exception ex)
             {
-                buyer.WalletBalance -= walletAmount;
-                _buyerRepo.Update(buyer);
+                await _unitOfWork.RollbackTransactionAsync();
+                return StatusCode(500, $"Error confirming order: {ex.Message}");
             }
-
-            _buyerOrderRepo.Delete(pendingOrder);
-            await _buyerOrderRepo.SaveChangesAsync();
-            await _supplierOrderRepo.SaveChangesAsync();
-
-            return Ok(new
-            {
-                message = "Order confirmed successfully",
-                usedWallet = confirmDto.UseWallet,
-                walletAmount = walletAmount,
-                remainingAmount = remainingAmount
-            });
         }
 
 
@@ -1814,7 +1926,7 @@ namespace Order.API.Controllers
         }
 
         [HttpGet("getSuppliers")]
-        [Authorize] 
+        [Authorize]
         public async Task<ActionResult<PagedResponseDto<SupplierDto>>> GetSuppliers(
         [FromQuery] string? type,
         [FromQuery] string? name,
@@ -1826,47 +1938,64 @@ namespace Order.API.Controllers
 
             try
             {
+                var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(buyerId))
+                    return Unauthorized("Buyer ID not found in token.");
+
+                var buyer = await _buyerRepo.GetByIdAsync(int.Parse(buyerId));
+                if (buyer == null)
+                    return NotFound("Buyer not found.");
+
+                // ✅ هات الموردين اللي بيدعموا منطقة المشتري فقط
                 var suppliersQuery = await _supplierRepo.GetAllAsync(
-                predicate: s => true, 
-                includes: x => x.Ratings
+                    s => s.SupplierDeliveryStations.Any(sd => sd.DeliveryStationId == buyer.DeliveryStationId),
+                    s => s.Ratings,
+                    s => s.SupplierDeliveryStations
                 );
 
+                // فلترة بالاسم
                 if (!string.IsNullOrEmpty(name))
                 {
                     suppliersQuery = suppliersQuery
-                        .Where(s => !string.IsNullOrEmpty(s.Name) && s.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
+                        .Where(s => !string.IsNullOrEmpty(s.Name) &&
+                                    s.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
                         .ToList();
                 }
 
-                if (!string.IsNullOrEmpty(type))
+                // فلترة بالـ type
+                if (!string.IsNullOrEmpty(type) && Enum.TryParse<SupplierType>(type, true, out var supplierTypeEnum))
                 {
-                    if (Enum.TryParse<SupplierType>(type, true, out var supplierTypeEnum))
-                    {
-                        suppliersQuery = suppliersQuery
-                            .Where(s => s.SupplierType == supplierTypeEnum)
-                            .ToList();
-                    }
+                    suppliersQuery = suppliersQuery
+                        .Where(s => s.SupplierType == supplierTypeEnum)
+                        .ToList();
                 }
 
-                var mappedSuppliers = suppliersQuery.Select(s => new SupplierDto
+                var mappedSuppliers = suppliersQuery.Select(s =>
                 {
-                    Id = s.Id,
-                    Email = s.Email,
-                    Name = s.Name,
-                    CommercialName = s.CommercialName,
-                    PhoneNumber = s.PhoneNumber,
-                    SupplierType = s.SupplierType.ToString(),
-                    WarehouseLocation = s.WarehouseLocation,
-                    WarehouseAddress = s.WarehouseAddress,
-                    WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{s.WarehouseImageUrl}",
-                    DeliveryMethod = s.DeliveryMethod,
-                    ProfitPercentage = s.ProfitPercentage,
-                    MinimumOrderPrice = s.MinimumOrderPrice,
-                    MinimumOrderItems = s.MinimumOrderItems,
-                    DeliveryDays = s.DeliveryDays,
-                    WalletBalance = s.WalletBalance,
-                    AverageRating = s.Ratings.Any() ? s.Ratings.Average(r => r.Rate) : 0,
-                    TotalRatings = s.Ratings.Count
+                    // ✅ هات MinimumOrderPrice الخاص بمنطقة المشتري
+                    var supplierStation = s.SupplierDeliveryStations
+                        .FirstOrDefault(sd => sd.DeliveryStationId == buyer.DeliveryStationId);
+
+                    return new SupplierDto
+                    {
+                        Id = s.Id,
+                        Email = s.Email,
+                        Name = s.Name,
+                        CommercialName = s.CommercialName,
+                        PhoneNumber = s.PhoneNumber,
+                        SupplierType = s.SupplierType.ToString(),
+                        WarehouseLocation = s.WarehouseLocation,
+                        WarehouseAddress = s.WarehouseAddress,
+                        WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{s.WarehouseImageUrl}",
+                        DeliveryMethod = s.DeliveryMethod,
+                        ProfitPercentage = s.ProfitPercentage,
+                        MinimumOrderPrice = supplierStation?.MinimumOrderPrice ?? 0, // من الـ SupplierDeliveryStation
+                        MinimumOrderItems = s.MinimumOrderItems, // من جدول Supplier
+                        DeliveryDays = s.DeliveryDays,
+                        WalletBalance = s.WalletBalance,
+                        AverageRating = s.Ratings.Any() ? s.Ratings.Average(r => r.Rate) : 0,
+                        TotalRatings = s.Ratings.Count
+                    };
                 }).ToList();
 
                 var totalItems = mappedSuppliers.Count;

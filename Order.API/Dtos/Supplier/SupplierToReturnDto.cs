@@ -13,7 +13,7 @@
         public string WarehouseImageUrl { get; set; }
         public string DeliveryMethod { get; set; }
         public double ProfitPercentage { get; set; }
-        public decimal MinimumOrderPrice { get; set; }
+        public decimal? MinimumOrderPrice { get; set; }
         public int MinimumOrderItems { get; set; }
         public int DeliveryDays { get; set; }
         public string Token { get; set; } = "";

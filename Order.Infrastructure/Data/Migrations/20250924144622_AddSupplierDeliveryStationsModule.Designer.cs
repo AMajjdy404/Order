@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Order.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using Order.Infrastructure.Data;
 namespace Order.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(OrderDbContext))]
-    partial class OrderDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250924144622_AddSupplierDeliveryStationsModule")]
+    partial class AddSupplierDeliveryStationsModule
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -249,9 +252,6 @@ namespace Order.Infrastructure.Data.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<int>("DeliveryStationId")
-                        .HasColumnType("int");
-
                     b.Property<string>("DeviceToken")
                         .HasColumnType("nvarchar(max)");
 
@@ -298,8 +298,6 @@ namespace Order.Infrastructure.Data.Migrations
                         .HasColumnType("decimal(18,2)");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("DeliveryStationId");
 
                     b.ToTable("Buyers");
                 });
@@ -545,15 +543,15 @@ namespace Order.Infrastructure.Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("DeviceToken")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("MinimumOrderItems")
                         .HasColumnType("int");
+
+                    b.Property<decimal>("MinimumOrderPrice")
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -927,17 +925,6 @@ namespace Order.Infrastructure.Data.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("Order.Domain.Models.Buyer", b =>
-                {
-                    b.HasOne("Order.Domain.Models.DeliveryStation", "DeliveryStation")
-                        .WithMany()
-                        .HasForeignKey("DeliveryStationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("DeliveryStation");
                 });
 
             modelBuilder.Entity("Order.Domain.Models.BuyerOrder", b =>

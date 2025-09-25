@@ -21,6 +21,7 @@ namespace Order.API.Dtos.Buyer
         [Required]
         public string PropertyAddress { get; set; }
         [Required]
+        public int DeliveryStationId { get; set; }
         public IFormFile PropertyInsideImage { get; set; }
         [Required]
         public IFormFile PropertyOutsideImage { get; set; }

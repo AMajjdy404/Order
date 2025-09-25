@@ -40,6 +40,8 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<MyOrderItem> _myOrderItemRepo;
         private readonly IGenericRepository<Buyer> _buyerRepo;
         private readonly IUnitOfWork _unitOfWork;
+        private readonly IGenericRepository<SupplierDeliveryStation> _supplierDeliveryStationRepo;
+        private readonly IGenericRepository<DeliveryStation> _deliveryStationRepo;
 
         public SupplierController(
             IGenericRepository<Supplier> supplierRepo,
@@ -58,7 +60,9 @@ namespace Order.API.Controllers
             IGenericRepository<SupplierStatement> supplierStatementRepo,
             IGenericRepository<MyOrderItem> myOrderItemRepo,
             IGenericRepository<Buyer> buyerRepo,
-            IUnitOfWork unitOfWork
+            IUnitOfWork unitOfWork,
+            IGenericRepository<SupplierDeliveryStation> supplierDeliveryStationRepo,
+            IGenericRepository<DeliveryStation> deliveryStationRepo
              )
         {
             _supplierRepo = supplierRepo;
@@ -78,6 +82,8 @@ namespace Order.API.Controllers
             _myOrderItemRepo = myOrderItemRepo;
             _buyerRepo = buyerRepo;
             _unitOfWork = unitOfWork;
+            _supplierDeliveryStationRepo = supplierDeliveryStationRepo;
+            _deliveryStationRepo = deliveryStationRepo;
         }
 
         [HttpPost("register")]
@@ -1318,7 +1324,7 @@ namespace Order.API.Controllers
                 WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{supplier.WarehouseImageUrl}",
                 DeliveryMethod = supplier.DeliveryMethod,
                 ProfitPercentage = supplier.ProfitPercentage,
-                MinimumOrderPrice = supplier.MinimumOrderPrice,
+                MinimumOrderPrice = 0,
                 MinimumOrderItems = supplier.MinimumOrderItems,
                 DeliveryDays = supplier.DeliveryDays,
                 WalletBalance = supplier.WalletBalance,
@@ -1364,5 +1370,143 @@ namespace Order.API.Controllers
                 data = response
             });
         }
+
+
+
+        /////////////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////////////
+
+        [HttpPost("addDeliveryStations")]
+        [Authorize]
+        public async Task<IActionResult> AddDeliveryStations([FromBody] List<SupplierDeliveryStationDto> stations)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            if (stations == null || !stations.Any())
+                return BadRequest("At least one delivery station is required.");
+
+            foreach (var dto in stations)
+            {
+                var exists = await _supplierDeliveryStationRepo
+                    .AnyAsync(s => s.SupplierId == supplierId && s.DeliveryStationId == dto.DeliveryStationId);
+
+                if (exists)
+                {
+                    return BadRequest(new { message = $"Delivery station {dto.DeliveryStationId} already exists for this supplier." });
+                }
+
+                var station = new SupplierDeliveryStation
+                {
+                    SupplierId = supplierId,
+                    DeliveryStationId = dto.DeliveryStationId,
+                    MinimumOrderPrice = dto.MinimumOrderPrice
+                };
+                await _supplierDeliveryStationRepo.AddAsync(station);
+            }
+
+            await _supplierDeliveryStationRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Delivery stations added successfully" });
+        }
+
+        [HttpPut("updateDeliveryStation")]
+        [Authorize]
+        public async Task<IActionResult> UpdateDeliveryStation([FromBody] SupplierDeliveryStationDto dto)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            var station = await _supplierDeliveryStationRepo
+                .GetFirstOrDefaultAsync(s => s.SupplierId == supplierId && s.DeliveryStationId == dto.DeliveryStationId);
+
+            if (station == null)
+                return NotFound(new { message = "Delivery station not found for this supplier." });
+
+            // تعديل السعر
+            station.MinimumOrderPrice = dto.MinimumOrderPrice;
+
+            _supplierDeliveryStationRepo.Update(station);
+            await _supplierDeliveryStationRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Delivery station updated successfully" });
+        }
+
+        [HttpGet("getMyDeliveryStations")]
+        [Authorize]
+        public async Task<IActionResult> GetMyDeliveryStations()
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            var stations = await _supplierDeliveryStationRepo.GetAllAsync(
+                s => s.SupplierId == supplierId,
+                x => x.DeliveryStation // include عشان نجيب اسم المنطقة
+            );
+
+            var result = stations.Select(s => new
+            {
+                DeliveryStationId = s.DeliveryStationId,
+                DeliveryStationName = s.DeliveryStation?.Name, // اسم المنطقة
+                MinimumOrderPrice = s.MinimumOrderPrice
+            });
+
+            return Ok(result);
+        }
+
+        [HttpDelete("deleteSupplierDeliveryStation/{id}")]
+        [Authorize]
+        public async Task<IActionResult> DeleteSupplierDeliveryStation(int id)
+        {
+            var supplierIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierIdStr))
+                return Unauthorized("Supplier ID not found in token.");
+
+            if (!int.TryParse(supplierIdStr, out var supplierId))
+                return BadRequest("Invalid supplier id.");
+
+            // هات الـ SupplierDeliveryStation المطلوب
+            var station = await _supplierDeliveryStationRepo.GetFirstOrDefaultAsync(
+                s => s.Id == id && s.SupplierId == supplierId
+            );
+
+            if (station == null)
+                return NotFound(new { message = "SupplierDeliveryStation not found for this supplier." });
+
+            _supplierDeliveryStationRepo.Delete(station);
+            await _supplierDeliveryStationRepo.SaveChangesAsync();
+
+            return Ok(new { message = "SupplierDeliveryStation deleted successfully." });
+        }
+
+
+
+        [HttpGet("getAllDeliveryStation")]
+        [Authorize]
+        public async Task<IActionResult> GetAll()
+        {
+            var stations = await _deliveryStationRepo.GetAllAsync();
+
+            var result = stations.Select(s => new DeliveryStationDto
+            {
+                Id = s.Id,
+                Name = s.Name
+            });
+
+            return Ok(result);
+        }
+
     }
 }

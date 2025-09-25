@@ -24,6 +24,9 @@ namespace Order.Infrastructure.Data
         public DbSet<ReturnOrderItem> ReturnOrders { get; set; }
         public DbSet<SupplierStatement> SupplierStatements { get; set; }
         public DbSet<Advertisement> Advertisements { get; set; }
+        public DbSet<SupplierDeliveryStation> SupplierDeliveryStations { get; set; }
+        public DbSet<DeliveryStation> DeliveryStations { get; set; }
+
 
         public OrderDbContext(DbContextOptions<OrderDbContext> options) :base(options)
         {

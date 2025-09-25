@@ -39,5 +39,8 @@ namespace Order.Domain.Models
         public decimal WalletBalance { get; set; } = 0;
         public string? DeviceToken { get; set; }
 
+        public int DeliveryStationId { get; set; }
+        public DeliveryStation DeliveryStation { get; set; }
+
     }
 }

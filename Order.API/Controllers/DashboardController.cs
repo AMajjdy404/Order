@@ -483,7 +483,6 @@ namespace Order.API.Controllers
             supplier.WarehouseAddress = updateDto.WarehouseAddress ?? supplier.WarehouseAddress;
             supplier.DeliveryMethod = updateDto.DeliveryMethod ?? supplier.DeliveryMethod;
             supplier.ProfitPercentage = updateDto.ProfitPercentage ?? supplier.ProfitPercentage;
-            supplier.MinimumOrderPrice = updateDto.MinimumOrderPrice ?? supplier.MinimumOrderPrice;
             supplier.MinimumOrderItems = updateDto.MinimumOrderItems ?? supplier.MinimumOrderItems;
             supplier.DeliveryDays = updateDto.DeliveryDays ?? supplier.DeliveryDays;
 
@@ -579,13 +578,13 @@ namespace Order.API.Controllers
                     WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{s.WarehouseImageUrl}",
                     DeliveryMethod = s.DeliveryMethod,
                     ProfitPercentage = s.ProfitPercentage,
-                    MinimumOrderPrice = s.MinimumOrderPrice,
+                    MinimumOrderPrice = 0,
                     MinimumOrderItems = s.MinimumOrderItems,
                     DeliveryDays = s.DeliveryDays,
                     WalletBalance = s.WalletBalance
                 }).ToList();
 
-                var totalItems = mappedSuppliers.Count;
+                var totalItems = mappedSuppliers.Count();
                 var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
 
                 var pagedSuppliers = mappedSuppliers

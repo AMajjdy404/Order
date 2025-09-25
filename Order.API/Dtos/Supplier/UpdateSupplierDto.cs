@@ -15,7 +15,6 @@ namespace Order.API.Dtos.Supplier
         public IFormFile? WarehouseImage { get; set; }
         public string? DeliveryMethod { get; set; }
         public double? ProfitPercentage { get; set; }
-        public decimal? MinimumOrderPrice { get; set; } 
         [Range(1, int.MaxValue, ErrorMessage = "Minimum order items must be at least 1")]
         public int? MinimumOrderItems { get; set; }
         public int? DeliveryDays { get; set; }
