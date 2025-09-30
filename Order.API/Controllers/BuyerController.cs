@@ -43,6 +43,7 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<Advertisement> _advertisementRepo;
         private readonly IGenericRepository<SupplierRating> _supplierRatingRepo;
         private readonly IUnitOfWork _unitOfWork;
+        private readonly IGenericRepository<DeliveryStation> _deliveryStationRepo;
 
         public BuyerController(
             IGenericRepository<Buyer> buyerRepo,
@@ -62,7 +63,8 @@ namespace Order.API.Controllers
              IGenericRepository<ReferralCode> referralCodeRepo,
              IGenericRepository<Advertisement> advertisementRepo,
              IGenericRepository<SupplierRating> supplierRatingRepo,
-             IUnitOfWork unitOfWork
+             IUnitOfWork unitOfWork,
+             IGenericRepository<DeliveryStation> deliveryStationRepo
 
 
             )
@@ -84,6 +86,7 @@ namespace Order.API.Controllers
             _advertisementRepo = advertisementRepo;
             _supplierRatingRepo = supplierRatingRepo;
             _unitOfWork = unitOfWork;
+            _deliveryStationRepo = deliveryStationRepo;
         }
 
         [HttpPost("register")]
@@ -110,7 +113,7 @@ namespace Order.API.Controllers
             }
 
             var buyer = _mapper.Map<Buyer>(registerDto);
-            buyer.Password = _passwordHasher.HashPassword(buyer, registerDto.Password);
+            //buyer.Password = _passwordHasher.HashPassword(buyer, registerDto.Password);
             buyer.PropertyInsideImagePath = insideImagePath;
             buyer.PropertyOutsideImagePath = outsideImagePath;
             buyer.DeliveryStationId = registerDto.DeliveryStationId;
@@ -196,12 +199,12 @@ namespace Order.API.Controllers
                 }
 
                 // التحقق من كلمة المرور
-                var verificationResult = _passwordHasher.VerifyHashedPassword(buyer, buyer.Password, loginDto.Password);
-                if (verificationResult == PasswordVerificationResult.Failed)
-                {
-                    _logger.LogWarning("Invalid password for phone number {PhoneNumber}", loginDto.PhoneNumber);
-                    return Unauthorized("Invalid phone number or password.");
-                }
+                //var verificationResult = _passwordHasher.VerifyHashedPassword(buyer, buyer.Password, loginDto.Password);
+                //if (verificationResult == PasswordVerificationResult.Failed)
+                //{
+                //    _logger.LogWarning("Invalid password for phone number {PhoneNumber}", loginDto.PhoneNumber);
+                //    return Unauthorized("Invalid phone number or password.");
+                //}
 
                 // إنشاء التوكن
                 var token = await _tokenService.CreateTokenAsync(buyer, loginDto.RememberMe);
@@ -227,8 +230,22 @@ namespace Order.API.Controllers
             }
         }
 
+        [HttpGet("getAllDeliveryStation")]
+        public async Task<IActionResult> GetAll()
+        {
+            var stations = await _deliveryStationRepo.GetAllAsync();
+
+            var result = stations.Select(s => new DeliveryStationDto
+            {
+                Id = s.Id,
+                Name = s.Name
+            });
+
+            return Ok(result);
+        }
+
         [HttpPut("updateDeviceToken/{buyerId}")]
-        public async Task<IActionResult> UpdateDeviceToken(int buyerId, [FromBody] UpdateDeviceTokenDto dto)
+        public async Task<IActionResult> UpdateDeviceToken([FromRoute]int buyerId, [FromBody] UpdateDeviceTokenDto dto)
         {
             var buyer = await _buyerRepo.GetByIdAsync(buyerId);
             if (buyer == null)
@@ -236,7 +253,7 @@ namespace Order.API.Controllers
 
             buyer.DeviceToken = dto.DeviceToken;
             _buyerRepo.Update(buyer);
-            await _buyerOrderRepo.SaveChangesAsync();
+            await _buyerRepo.SaveChangesAsync();
 
             return Ok(new { message = "Device token updated successfully" });
         }
@@ -913,12 +930,71 @@ namespace Order.API.Controllers
             }
         }
 
+        //[HttpGet("supplier/{id}/products")]
+        //[Authorize]
+        //public async Task<ActionResult<PagedResponseDto<SupplierProductDto>>> GetSupplierProductsBySupplierId(
+        //    [FromRoute] int id,
+        //    [FromQuery] int page = 1,
+        //    [FromQuery] int pageSize = 10)
+        //{
+        //    if (!ModelState.IsValid)
+        //        return BadRequest(ModelState);
+
+        //    if (id <= 0)
+        //        return BadRequest(new { message = "Supplier ID must be greater than zero" });
+
+        //    if (page < 1 || pageSize < 1)
+        //        return BadRequest(new { message = "Page number and page size must be greater than zero" });
+
+        //    try
+        //    {
+        //        var supplier = await _supplierRepo.GetByIdAsync(id);
+        //        if (supplier == null)
+        //            return NotFound(new { message = $"Supplier with ID {id} not found." });
+
+        //        var supplierProducts = await _supplierProductRepo.GetAllAsync(
+        //            sp => sp.SupplierId == id && sp.Status == Status.Active,
+        //            sp => sp.Product
+        //        );
+
+        //        var mappedSupplierProducts = _mapper.Map<List<SupplierProductDto>>(supplierProducts);
+
+        //        var totalItems = mappedSupplierProducts.Count;
+        //        var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+
+        //        var pagedSupplierProducts = mappedSupplierProducts
+        //            .OrderBy(sp => sp.Id)
+        //            .Skip((page - 1) * pageSize)
+        //            .Take(pageSize)
+        //            .ToList();
+
+        //        var response = new PagedResponseDto<SupplierProductDto>
+        //        {
+        //            Items = pagedSupplierProducts,
+        //            Page = page,
+        //            PageSize = pageSize,
+        //            TotalItems = totalItems,
+        //            TotalPages = totalPages
+        //        };
+
+        //        if (!pagedSupplierProducts.Any())
+        //            return NotFound(new { message = $"No products found for supplier with ID {id}." });
+
+        //        return Ok(new { message = "Supplier products retrieved successfully", Data = response });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, $"Error retrieving supplier products: {ex.Message}");
+        //    }
+        //}
+
         [HttpGet("supplier/{id}/products")]
         [Authorize]
         public async Task<ActionResult<PagedResponseDto<SupplierProductDto>>> GetSupplierProductsBySupplierId(
-            [FromRoute] int id,
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 10)
+        [FromRoute] int id,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? category = null) 
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
@@ -936,7 +1012,9 @@ namespace Order.API.Controllers
                     return NotFound(new { message = $"Supplier with ID {id} not found." });
 
                 var supplierProducts = await _supplierProductRepo.GetAllAsync(
-                    sp => sp.SupplierId == id && sp.Status == Status.Active,
+                    sp => sp.SupplierId == id
+                       && sp.Status == Status.Active
+                       && (string.IsNullOrEmpty(category) || sp.Product.Category == category),
                     sp => sp.Product
                 );
 
@@ -961,13 +1039,53 @@ namespace Order.API.Controllers
                 };
 
                 if (!pagedSupplierProducts.Any())
-                    return NotFound(new { message = $"No products found for supplier with ID {id}." });
+                    return NotFound(new { message = $"No products found for supplier with ID {id} and category '{category ?? "All"}'." });
 
                 return Ok(new { message = "Supplier products retrieved successfully", Data = response });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error retrieving supplier products: {ex.Message}");
+            }
+        }
+
+        [HttpGet("supplier/{id}/categories")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<string>>> GetSupplierCategories([FromRoute] int id)
+        {
+            if (id <= 0)
+                return BadRequest(new { message = "Supplier ID must be greater than zero" });
+
+            try
+            {
+                var supplier = await _supplierRepo.GetByIdAsync(id);
+                if (supplier == null)
+                    return NotFound(new { message = $"Supplier with ID {id} not found." });
+
+                var supplierProducts = await _supplierProductRepo.GetAllAsync(
+                    sp => sp.SupplierId == id && sp.Status == Status.Active,
+                    sp => sp.Product
+                );
+
+                var categories = supplierProducts
+                    .Where(sp => sp.Product != null && !string.IsNullOrEmpty(sp.Product.Category))
+                    .Select(sp => sp.Product.Category)
+                    .Distinct()
+                    .OrderBy(c => c)
+                    .ToList();
+
+                if (!categories.Any())
+                    return NotFound(new { message = $"No categories found for supplier with ID {id}." });
+
+                return Ok(new
+                {
+                    message = "Supplier categories retrieved successfully",
+                    Data = categories
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving supplier categories: {ex.Message}");
             }
         }
 
@@ -2026,7 +2144,6 @@ namespace Order.API.Controllers
                 return StatusCode(500, $"Error retrieving suppliers: {ex.Message}");
             }
         }
-
 
 
     }

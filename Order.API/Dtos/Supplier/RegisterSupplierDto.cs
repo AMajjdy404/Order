@@ -9,9 +9,9 @@ namespace Order.API.Dtos.Supplier
         [Required]
 
         public string Email { get; set; }
-        [Required]
+        //[Required]
 
-        public string Password { get; set; }
+        //public string Password { get; set; }
         [Required]
 
         public string CommercialName { get; set; }
@@ -33,15 +33,13 @@ namespace Order.API.Dtos.Supplier
         [Required]
 
         public string DeliveryMethod { get; set; }
-        [Required]
-        [Range(1, double.MaxValue, ErrorMessage = "Minimum order price must be Bigger than 0")]
-        public decimal MinimumOrderPrice { get; set; } 
 
         [Required]
         [Range(1, int.MaxValue, ErrorMessage = "Minimum order items must be at least 1")]
         public int MinimumOrderItems { get; set; }
         [Required]
         public int DeliveryDays { get; set; }
+        public string? DeviceToken { get; set; } = string.Empty;
 
     }
 }

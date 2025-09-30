@@ -17,7 +17,7 @@ namespace Order.API.Helpers
             CreateMap<RegisterBuyerDto, Buyer>()
             .ForMember(d => d.PropertyInsideImagePath, o => o.Ignore())
             .ForMember(d => d.PropertyOutsideImagePath, o => o.Ignore())
-            .ForMember(d => d.Password, o => o.Ignore());
+            /*.ForMember(d => d.Password, o => o.Ignore())*/;
 
             CreateMap<Buyer, BuyerToReturnDto>()
                 .ForMember(d => d.PropertyInsideImagePath, o => o.MapFrom<BuyerInsidePictureUrlResolver>())
@@ -25,7 +25,7 @@ namespace Order.API.Helpers
 
             CreateMap<RegisterSupplierDto, Supplier>()
            .ForMember(d => d.WarehouseImageUrl, o => o.Ignore())
-           .ForMember(d => d.Password, o => o.Ignore())
+           //.ForMember(d => d.Password, o => o.Ignore())
            .ForMember(d => d.ProfitPercentage, o => o.Ignore())
            .ForMember(dest => dest.SupplierType, opt => opt.MapFrom(src => Enum.Parse<SupplierType>(src.SupplierType))) 
            .ForMember(dest => dest.MinimumOrderItems, opt => opt.MapFrom(src => src.MinimumOrderItems));

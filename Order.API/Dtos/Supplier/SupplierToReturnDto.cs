@@ -16,6 +16,8 @@
         public decimal? MinimumOrderPrice { get; set; }
         public int MinimumOrderItems { get; set; }
         public int DeliveryDays { get; set; }
+        public string? DeviceToken { get; set; }
+
         public string Token { get; set; } = "";
     }
 }

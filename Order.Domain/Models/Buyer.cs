@@ -14,9 +14,9 @@ namespace Order.Domain.Models
         public string FullName { get; set; }
         [Required]
         public string PhoneNumber { get; set; }
-        [Required]
+        //[Required]
 
-        public string Password { get; set; }
+        //public string Password { get; set; }
         [Required]
 
         public string PropertyName { get; set; }

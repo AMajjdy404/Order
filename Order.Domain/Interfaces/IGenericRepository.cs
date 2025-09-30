@@ -37,6 +37,6 @@ namespace Order.Domain.Interfaces
         Func<IQueryable<T>, IQueryable<T>> include = null);
         ValueTask<PagedResult<T>> GetPagedAsync(int page, int pageSize, Expression<Func<T, bool>> predicate, Expression<Func<T, object>> orderBy, bool descending = false, params Expression<Func<T, object>>[] includes);
         IQueryable<T> Query();
-
+        void RemoveRange(IEnumerable<T> entities);
     }
 }

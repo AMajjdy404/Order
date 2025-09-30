@@ -183,5 +183,10 @@ namespace Order.Infrastructure.Implementation
         {
             return await _context.Set<T>().ToListAsync();
         }
+
+        public void RemoveRange(IEnumerable<T> entities)
+        {
+            _context.Set<T>().RemoveRange(entities);
+        }
     }
 }

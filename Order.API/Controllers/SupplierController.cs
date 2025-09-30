@@ -92,7 +92,6 @@ namespace Order.API.Controllers
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
-            // التحقق من إن SupplierType صالح
             try
             {
                 if (!Enum.TryParse<SupplierType>(registerDto.SupplierType, true, out _))
@@ -103,7 +102,6 @@ namespace Order.API.Controllers
                 return BadRequest("Invalid SupplierType format.");
             }
 
-            // التحقق من رقم الهاتف
             var existingSupplier = await _supplierRepo.GetFirstOrDefaultAsync(b => b.PhoneNumber == registerDto.PhoneNumber);
             if (existingSupplier != null)
                 return BadRequest("Phone number already exists.");
@@ -119,7 +117,7 @@ namespace Order.API.Controllers
             }
 
             var supplier = _mapper.Map<Supplier>(registerDto);
-            supplier.Password = _passwordHasher.HashPassword(supplier, registerDto.Password);
+            //supplier.Password = _passwordHasher.HashPassword(supplier, registerDto.Password);
             supplier.WarehouseImageUrl = warehouseImageUrl;
 
             try
@@ -158,12 +156,12 @@ namespace Order.API.Controllers
                     return Unauthorized("Invalid phone number or password.");
                 }
 
-                var verificationResult = _passwordHasher.VerifyHashedPassword(supplier, supplier.Password, loginDto.Password);
-                if (verificationResult == PasswordVerificationResult.Failed)
-                {
-                    _logger.LogWarning("Invalid password for phone number {PhoneNumber}", loginDto.PhoneNumber);
-                    return Unauthorized("Invalid phone number or password.");
-                }
+                //var verificationResult = _passwordHasher.VerifyHashedPassword(supplier, supplier.Password, loginDto.Password);
+                //if (verificationResult == PasswordVerificationResult.Failed)
+                //{
+                //    _logger.LogWarning("Invalid password for phone number {PhoneNumber}", loginDto.PhoneNumber);
+                //    return Unauthorized("Invalid phone number or password.");
+                //}
 
                 var token = await _tokenService.CreateTokenAsync(supplier, loginDto.RememberMe);
                 _logger.LogInformation("Token generated successfully for phone number {PhoneNumber}", loginDto.PhoneNumber);
@@ -201,10 +199,8 @@ namespace Order.API.Controllers
 
             try
             {
-                // جلب كل المنتجات
                 var productsQuery = await _productRepo.GetAllAsync();
 
-                // لو فيه اسم متبعت، فلتر بالاسم
                 if (!string.IsNullOrWhiteSpace(productName))
                 {
                     productsQuery = productsQuery
@@ -212,7 +208,6 @@ namespace Order.API.Controllers
                         .ToList();
                 }
 
-                // تحويل المنتجات إلى ReturnedProductDto
                 var mappedProducts = productsQuery.Select(p => new ReturnedProductDto
                 {
                     Id = p.Id,
@@ -513,7 +508,6 @@ namespace Order.API.Controllers
             if (page <= 0) page = 1;
             if (pageSize <= 0) pageSize = 10;
 
-            // جلب الصفحات من الريبو مع include للعناصر فقط (تجنّب include الذي يخلق روابط عكسية كثيرة)
             var paged = await _supplierOrderRepo.GetPagedAsync(
                 page,
                 pageSize,
@@ -523,7 +517,6 @@ namespace Order.API.Controllers
                 includes: o => o.Items
             );
 
-            // map/projection لإزالة الروابط العكسية وتجنّب cycles
             var dtoList = paged.Items.Select(so => new SupplierOrderDto
             {
                 Id = so.Id,
@@ -680,7 +673,6 @@ namespace Order.API.Controllers
         [Authorize]
         public async Task<IActionResult> UpdateSupplierAndMyOrderQuantities(int orderId,[FromBody] List<UpdateOrderItemQuantityDto> updatedItems)
         {
-            // 1️⃣ جلب الطلب المورد
             var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
                 o => o.Id == orderId && o.Status == OrderStatus.Pending,
                 q => q.Include(o => o.Items)
@@ -689,7 +681,6 @@ namespace Order.API.Controllers
             if (supplierOrder == null)
                 return NotFound("Supplier order not found or not pending.");
 
-            // 2️⃣ تعديل الكميات + تعديل مخزون SupplierProduct
             foreach (var item in updatedItems)
             {
                 var orderItem = supplierOrder.Items.FirstOrDefault(i => i.Id == item.ItemId);
@@ -704,13 +695,11 @@ namespace Order.API.Controllers
 
                     if (item.NewQuantity < orderItem.Quantity)
                     {
-                        // تقليل الكمية → زيادة المخزون
                         var difference = orderItem.Quantity - item.NewQuantity;
                         supplierProduct.Quantity += difference;
                     }
                     else if (item.NewQuantity > orderItem.Quantity)
                     {
-                        // زيادة الكمية → خصم من المخزون
                         var difference = item.NewQuantity - orderItem.Quantity;
                         if (supplierProduct.Quantity < difference)
                             return BadRequest($"Not enough stock for product {supplierProduct.Id}");
@@ -718,19 +707,15 @@ namespace Order.API.Controllers
                         supplierProduct.Quantity -= difference;
                     }
 
-                    // تعديل الكمية في الطلب
                     orderItem.Quantity = item.NewQuantity;
 
-                    // تحديث المنتج
                     _supplierProductRepo.Update(supplierProduct);
                 }
             }
 
-            // تحديث المبلغ الإجمالي للطلب المورد
             supplierOrder.TotalAmount = supplierOrder.Items.Sum(i => i.Quantity * i.UnitPrice);
             _supplierOrderRepo.Update(supplierOrder);
 
-            // 3️⃣ تحديث الطلب الرئيسي MyOrder
             var myOrder = await _myOrderRepo.GetFirstOrDefaultAsync(
                 o => o.Id == supplierOrder.MyOrderId && o.Status == OrderStatus.Pending,
                 q => q.Include(o => o.Items)
@@ -751,7 +736,6 @@ namespace Order.API.Controllers
                 _myOrderRepo.Update(myOrder);
             }
 
-            // 4️⃣ حفظ التغييرات
             await _supplierOrderRepo.SaveChangesAsync();
 
             return Ok("Quantities, total amounts, and stock updated successfully.");
@@ -1371,6 +1355,20 @@ namespace Order.API.Controllers
             });
         }
 
+        [HttpPut("updateDeviceToken/{supplierId}")]
+        public async Task<IActionResult> UpdateDeviceToken([FromRoute]int supplierId, [FromBody] UpdateDeviceTokenDto dto)
+        {
+            var supplier = await _supplierRepo.GetByIdAsync(supplierId);
+            if (supplier == null)
+                return NotFound("Buyer not found");
+
+            supplier.DeviceToken = dto.DeviceToken;
+            _supplierRepo.Update(supplier);
+            await _supplierRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Device token updated successfully" });
+        }
+
 
 
         /////////////////////////////////////////////////////////////////////////////////
@@ -1494,7 +1492,6 @@ namespace Order.API.Controllers
 
 
         [HttpGet("getAllDeliveryStation")]
-        [Authorize]
         public async Task<IActionResult> GetAll()
         {
             var stations = await _deliveryStationRepo.GetAllAsync();

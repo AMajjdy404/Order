@@ -488,8 +488,8 @@ namespace Order.API.Controllers
 
 
             // تحديث كلمة المرور إذا تم تمريرها
-            if (!string.IsNullOrEmpty(updateDto.Password))
-                supplier.Password = _passwordHasher.HashPassword(supplier, updateDto.Password);
+            //if (!string.IsNullOrEmpty(updateDto.Password))
+            //    supplier.Password = _passwordHasher.HashPassword(supplier, updateDto.Password);
 
             // تحديث صورة المستودع إذا تم تمريرها
             if (updateDto.WarehouseImage != null)
@@ -655,7 +655,6 @@ namespace Order.API.Controllers
 
             try
             {
-                // فلتر الحالة
                 OrderStatus? statusFilter = null;
                 if (!string.IsNullOrWhiteSpace(orderStatus))
                 {
@@ -665,7 +664,6 @@ namespace Order.API.Controllers
                         return BadRequest("Invalid order status.");
                 }
 
-                // فلتر نوع المورد
                 SupplierType? supplierTypeFilter = null;
                 if (!string.IsNullOrWhiteSpace(supplierType))
                 {
@@ -675,13 +673,11 @@ namespace Order.API.Controllers
                         return BadRequest("Invalid supplier type.");
                 }
 
-                // الفلتر الرئيسي
                 Expression<Func<SupplierOrder, bool>>? filter = o =>
                     (!statusFilter.HasValue || o.Status == statusFilter.Value) &&
                     (string.IsNullOrWhiteSpace(buyerName) || o.BuyerName.Contains(buyerName)) &&
                     (!supplierTypeFilter.HasValue || o.Supplier.SupplierType == supplierTypeFilter.Value);
 
-                // جلب البيانات
                 var orders = await _supplierOrderRepo.GetAllAsync(
                     filter: filter,
                     includes: new Expression<Func<SupplierOrder, object>>[]
@@ -698,7 +694,6 @@ namespace Order.API.Controllers
                     .Take(pageSize)
                     .ToList();
 
-                // تحويل للـ DTO
                 var orderDtos = pagedOrders.Select(o => new ReturnedSupplierOrderDto
                 {
                     Id = o.Id,
@@ -759,12 +754,11 @@ namespace Order.API.Controllers
 
             try
             {
-                // فلتر بالاسم + التاريخ
                 Expression<Func<ReturnOrderItem, bool>>? filter = r =>
                     (string.IsNullOrWhiteSpace(buyerName) ||
                      r.SupplierOrderItem.SupplierOrder.BuyerName.Contains(buyerName)) &&
 
-                    // فلترة بالتاريخ (Year / Month / Day)
+                    // (Year / Month / Day)
                     ((!day.HasValue && !month.HasValue && !year.HasValue) ||
 
                      (year.HasValue && !month.HasValue && !day.HasValue &&
@@ -791,7 +785,6 @@ namespace Order.API.Controllers
 
                 var totalCount = returnOrders.Count();
 
-                // ✅ Group by SupplierOrderId
                 var groupedReturns = returnOrders
                     .GroupBy(r => r.SupplierOrderItem.SupplierOrderId)
                     .Select(g => new GroupedReturnOrderDto
@@ -806,7 +799,7 @@ namespace Order.API.Controllers
                         {
                             Id = r.Id,
                             SupplierOrderItemId = r.SupplierOrderItemId,
-                            SupplierOrderId = g.Key, // ✅ added
+                            SupplierOrderId = g.Key,
                             ReturnedQuantity = r.ReturnedQuantity,
                             ReturnDate = r.ReturnDate.ToString("dd-MM-yyyy"),
                             ProductName = r.SupplierOrderItem.ProductName,
@@ -855,7 +848,6 @@ namespace Order.API.Controllers
             string? imageUrl = null;
             try
             {
-                // رفع الصورة
                 imageUrl = DocumentSettings.UploadFile(dto.Image, "Advertisements");
 
                 var ad = new Advertisement

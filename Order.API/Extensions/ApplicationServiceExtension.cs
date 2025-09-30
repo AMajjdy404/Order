@@ -14,6 +14,8 @@ namespace Order.API.Extensions
             Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
             Services.AddScoped<IUnitOfWork, UnitOfWork>();
             Services.AddScoped<INotificationService, NotificationService>();
+            Services.AddScoped<IOtpService,OtpService>();
+            Services.AddHostedService<OtpCleanupService>();
             Services.AddScoped<DataSeeder>();
             Services.AddAutoMapper(typeof(MappingProfiles));
 
