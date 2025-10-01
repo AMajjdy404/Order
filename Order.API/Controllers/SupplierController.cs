@@ -86,6 +86,9 @@ namespace Order.API.Controllers
             _deliveryStationRepo = deliveryStationRepo;
         }
 
+      
+
+
         [HttpPost("register")]
         public async Task<ActionResult<SupplierToReturnDto>> Register([FromForm] RegisterSupplierDto registerDto)
         {
@@ -119,6 +122,7 @@ namespace Order.API.Controllers
             var supplier = _mapper.Map<Supplier>(registerDto);
             //supplier.Password = _passwordHasher.HashPassword(supplier, registerDto.Password);
             supplier.WarehouseImageUrl = warehouseImageUrl;
+            supplier.IsActive = true;
 
             try
             {
@@ -155,6 +159,8 @@ namespace Order.API.Controllers
                     _logger.LogWarning("No buyer found with phone number {PhoneNumber}", loginDto.PhoneNumber);
                     return Unauthorized("Invalid phone number or password.");
                 }
+                if (!supplier.IsActive)
+                    return Unauthorized(new { message = "حسابك غير نشط" });
 
                 //var verificationResult = _passwordHasher.VerifyHashedPassword(supplier, supplier.Password, loginDto.Password);
                 //if (verificationResult == PasswordVerificationResult.Failed)
@@ -266,6 +272,9 @@ namespace Order.API.Controllers
             if (supplier == null)
                 return NotFound("Supplier not found.");
 
+            if (!supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
+
             var product = await _productRepo.GetByIdAsync(productDto.ProductId);
             if (product == null)
                 return NotFound("Product not found.");
@@ -311,6 +320,13 @@ namespace Order.API.Controllers
             var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(supplierId) || supplierProduct.SupplierId != int.Parse(supplierId))
                 return Unauthorized("You are not authorized to update this supplier product.");
+
+            var supplier = await _supplierRepo.GetByIdAsync(int.Parse(supplierId));
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
 
             var statusString = updateDto.Status?.Trim().ToLower();
             if (string.IsNullOrEmpty(statusString) || !new[] { "active", "notactive" }.Contains(statusString))
@@ -426,6 +442,13 @@ namespace Order.API.Controllers
             var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(supplierId))
                 return Unauthorized("Supplier ID not found in token.");
+
+            var supplier = await _supplierRepo.GetByIdAsync(int.Parse(supplierId));
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
 
             var supplierProduct = await _supplierProductRepo.GetByIdAsync(id);
             if (supplierProduct == null)
@@ -562,7 +585,14 @@ namespace Order.API.Controllers
             if (string.IsNullOrEmpty(supplierId))
                 return Unauthorized("Supplier ID not found in token.");
 
-              await _unitOfWork.BeginTransactionAsync(); 
+            var Supplier = await _supplierRepo.GetByIdAsync(int.Parse(supplierId));
+            if (Supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!Supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
+
+            await _unitOfWork.BeginTransactionAsync(); 
 
             try
             {
@@ -673,6 +703,17 @@ namespace Order.API.Controllers
         [Authorize]
         public async Task<IActionResult> UpdateSupplierAndMyOrderQuantities(int orderId,[FromBody] List<UpdateOrderItemQuantityDto> updatedItems)
         {
+            var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(supplierId))
+                return Unauthorized("Supplier ID not found in token.");
+
+            var Supplier = await _supplierRepo.GetByIdAsync(int.Parse(supplierId));
+            if (Supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!Supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
+
             var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
                 o => o.Id == orderId && o.Status == OrderStatus.Pending,
                 q => q.Include(o => o.Items)
@@ -749,6 +790,13 @@ namespace Order.API.Controllers
             if (string.IsNullOrEmpty(supplierId))
                 return Unauthorized("Supplier ID not found in token.");
 
+            var supplier = await _supplierRepo.GetByIdAsync(int.Parse(supplierId));
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
+
             var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
                 so => so.Id == id && so.SupplierId == int.Parse(supplierId)
             );
@@ -782,6 +830,12 @@ namespace Order.API.Controllers
             var supplierId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(supplierId))
                 return Unauthorized("Supplier ID not found in token.");
+            var supplier = await _supplierRepo.GetByIdAsync(int.Parse(supplierId));
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
 
             var supplierOrder = await _supplierOrderRepo.GetFirstOrDefaultAsync(
                 so => so.Id == id && so.SupplierId == int.Parse(supplierId)
@@ -880,6 +934,13 @@ namespace Order.API.Controllers
 
             if (!int.TryParse(supplierIdStr, out var supplierId))
                 return BadRequest("Invalid supplier id.");
+
+            var supplier = await _supplierRepo.GetByIdAsync(supplierId);
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
 
             if (page <= 0) page = 1;
             if (pageSize <= 0) pageSize = 10;
@@ -1423,6 +1484,13 @@ namespace Order.API.Controllers
             if (!int.TryParse(supplierIdStr, out var supplierId))
                 return BadRequest("Invalid supplier id.");
 
+            var supplier = await _supplierRepo.GetByIdAsync(supplierId);
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
+
             var station = await _supplierDeliveryStationRepo
                 .GetFirstOrDefaultAsync(s => s.SupplierId == supplierId && s.DeliveryStationId == dto.DeliveryStationId);
 
@@ -1475,6 +1543,13 @@ namespace Order.API.Controllers
             if (!int.TryParse(supplierIdStr, out var supplierId))
                 return BadRequest("Invalid supplier id.");
 
+            var supplier = await _supplierRepo.GetByIdAsync(supplierId);
+            if (supplier == null)
+                return NotFound("Supplier not found.");
+
+            if (!supplier.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
+
             // هات الـ SupplierDeliveryStation المطلوب
             var station = await _supplierDeliveryStationRepo.GetFirstOrDefaultAsync(
                 s => s.Id == id && s.SupplierId == supplierId
@@ -1488,8 +1563,6 @@ namespace Order.API.Controllers
 
             return Ok(new { message = "SupplierDeliveryStation deleted successfully." });
         }
-
-
 
         [HttpGet("getAllDeliveryStation")]
         public async Task<IActionResult> GetAll()

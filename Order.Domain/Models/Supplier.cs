@@ -30,6 +30,7 @@ namespace Order.Domain.Models
         public double ProfitPercentage { get; set; } = 1;
         public int MinimumOrderItems { get; set; }
         public int DeliveryDays { get; set; }
+        public bool IsActive { get; set; } = true; // Default = true
         public decimal? WalletBalance { get; set; } = 0;
         public string? DeviceToken { get; set; } = string.Empty;
         public ICollection<SupplierRating> Ratings { get; set; } = new List<SupplierRating>();

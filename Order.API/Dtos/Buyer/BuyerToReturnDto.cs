@@ -14,6 +14,7 @@
         public bool IsActive { get; set; }
         public decimal WalletBalance { get; set; }
         public string? DeviceToken { get; set; }
+        public string? DeliveryStation { get; set; }
         public string Token { get; set; } = "";
     }
 }

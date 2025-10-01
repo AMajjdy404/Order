@@ -44,6 +44,7 @@ namespace Order.API.Controllers
         private readonly IGenericRepository<SupplierRating> _supplierRatingRepo;
         private readonly IUnitOfWork _unitOfWork;
         private readonly IGenericRepository<DeliveryStation> _deliveryStationRepo;
+        private readonly IGenericRepository<SupplierDeliveryStation> _supplierDeliveryStationRepo;
 
         public BuyerController(
             IGenericRepository<Buyer> buyerRepo,
@@ -64,7 +65,8 @@ namespace Order.API.Controllers
              IGenericRepository<Advertisement> advertisementRepo,
              IGenericRepository<SupplierRating> supplierRatingRepo,
              IUnitOfWork unitOfWork,
-             IGenericRepository<DeliveryStation> deliveryStationRepo
+             IGenericRepository<DeliveryStation> deliveryStationRepo,
+             IGenericRepository<SupplierDeliveryStation> supplierDeliveryStationRepo
 
 
             )
@@ -87,6 +89,7 @@ namespace Order.API.Controllers
             _supplierRatingRepo = supplierRatingRepo;
             _unitOfWork = unitOfWork;
             _deliveryStationRepo = deliveryStationRepo;
+            _supplierDeliveryStationRepo = supplierDeliveryStationRepo;
         }
 
         [HttpPost("register")]
@@ -192,11 +195,11 @@ namespace Order.API.Controllers
                 }
 
                 // التحقق من حالة التفعيل
-                if (!buyer.IsActive)
-                {
-                    _logger.LogWarning("Login attempt failed for phone number {PhoneNumber}: Account is not activated", loginDto.PhoneNumber);
-                    return Unauthorized("Account is not activated. Please contact the administrator.");
-                }
+                //if (!buyer.IsActive)
+                //{
+                //    _logger.LogWarning("Login attempt failed for phone number {PhoneNumber}: Account is not activated", loginDto.PhoneNumber);
+                //    return Unauthorized("Account is not activated. Please contact the administrator.");
+                //}
 
                 // التحقق من كلمة المرور
                 //var verificationResult = _passwordHasher.VerifyHashedPassword(buyer, buyer.Password, loginDto.Password);
@@ -586,6 +589,7 @@ namespace Order.API.Controllers
         public async Task<ActionResult<PagedResponseDto<ProductDto>>> SearchProductsByCategory(
         [FromQuery] string category,
         [FromQuery] string? productName,
+        [FromQuery] string? company,   
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 10)
         {
@@ -600,15 +604,12 @@ namespace Order.API.Controllers
 
             try
             {
-                // 🟢 جلب المنتجات كلها (في الذاكرة)
                 var productsQuery = await _productRepo.GetAllAsync();
 
-                // 🟢 فلترة بالـ Category
                 productsQuery = productsQuery
                     .Where(p => !string.IsNullOrEmpty(p.Category) && p.Category == category)
                     .ToList();
 
-                // 🟢 فلترة باسم المنتج لو متبعت
                 if (!string.IsNullOrEmpty(productName))
                 {
                     var lowerName = productName.ToLower();
@@ -617,20 +618,25 @@ namespace Order.API.Controllers
                         .ToList();
                 }
 
-                // 🟢 جلب SupplierProducts للـ Products المطلوبة
+                if (!string.IsNullOrEmpty(company))
+                {
+                    var lowerCompany = company.ToLower();
+                    productsQuery = productsQuery
+                        .Where(p => !string.IsNullOrEmpty(p.Company) && p.Company.ToLower().Contains(lowerCompany))
+                        .ToList();
+                }
+
                 var productIds = productsQuery.Select(p => p.Id).ToList();
                 var supplierProducts = (await _supplierProductRepo
                     .GetAllAsync())
                     .Where(sp => productIds.Contains(sp.ProductId))
                     .ToList();
 
-                // 🟢 تجميع أقل سعر لكل منتج
                 var lowestPrices = supplierProducts
                     .GroupBy(sp => sp.ProductId)
                     .Select(g => new { ProductId = g.Key, LowestPriceNow = g.Min(sp => sp.PriceNow) })
                     .ToDictionary(x => x.ProductId, x => x.LowestPriceNow);
 
-                // 🟢 تحويل للـ DTO
                 var mappedProducts = productsQuery.Select(p => new ProductDto
                 {
                     Id = p.Id,
@@ -641,7 +647,6 @@ namespace Order.API.Controllers
                     LowestPriceNow = lowestPrices.ContainsKey(p.Id) ? lowestPrices[p.Id] : 0
                 }).ToList();
 
-                // 🟢 Paging في الذاكرة
                 var totalItems = mappedProducts.Count;
                 var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
 
@@ -670,6 +675,7 @@ namespace Order.API.Controllers
                 return StatusCode(500, $"Error retrieving products: {ex.Message}");
             }
         }
+
 
 
         #region products sql server 2022
@@ -914,13 +920,28 @@ namespace Order.API.Controllers
 
             try
             {
-                // جلب المورد بناءً على الـ Id
+                // 🟢 جلب المشتري من التوكن
+                var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(buyerId))
+                    return Unauthorized("Buyer ID not found in token.");
+
+                var buyer = await _buyerRepo.GetByIdAsync(int.Parse(buyerId));
+                if (buyer == null)
+                    return NotFound("Buyer not found.");
+
+                // 🟢 جلب المورد
                 var supplier = await _supplierRepo.GetByIdAsync(id);
                 if (supplier == null)
                     return NotFound(new { message = $"Supplier with ID {id} not found." });
 
-                // تحويل المورد إلى SupplierDto
+                // 🟢 جلب الـ MinimumOrderPrice بناءً على DeliveryStation بتاع المشتري
+                var supplierDeliveryStation = await _supplierDeliveryStationRepo.GetFirstOrDefaultAsync(
+                    sds => sds.SupplierId == id && sds.DeliveryStationId == buyer.DeliveryStationId
+                );
+
+                // 🟢 تحويل المورد لـ DTO
                 var supplierDto = _mapper.Map<SupplierDto>(supplier);
+                supplierDto.MinimumOrderPrice = supplierDeliveryStation?.MinimumOrderPrice ?? 0;
 
                 return Ok(new { message = "Supplier retrieved successfully", Data = supplierDto });
             }
@@ -929,6 +950,7 @@ namespace Order.API.Controllers
                 return StatusCode(500, $"Error retrieving supplier: {ex.Message}");
             }
         }
+
 
         //[HttpGet("supplier/{id}/products")]
         //[Authorize]
@@ -1677,6 +1699,13 @@ namespace Order.API.Controllers
             var buyerId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(buyerId))
                 return Unauthorized("Buyer ID not found in token.");
+
+            var Buyer = await _buyerRepo.GetByIdAsync(int.Parse(buyerId));
+            if (Buyer == null)
+                return NotFound("Buyer not found.");
+
+            if (!Buyer.IsActive)
+                return Unauthorized(new { message = "حسابك غير نشط" });
 
             await _unitOfWork.BeginTransactionAsync();
 

@@ -352,6 +352,161 @@ namespace Order.API.Controllers
 
 
         #region Buyer
+
+        [HttpPost("addBuyer")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult> CreateBuyer([FromForm] RegisterBuyerDto createDto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var existingBuyer = await _buyerRepo.GetFirstOrDefaultAsync(b => b.PhoneNumber == createDto.PhoneNumber);
+            if (existingBuyer != null)
+                return BadRequest("Phone number already exists.");
+
+            string? insideImagePath = null;
+            string? outsideImagePath = null;
+
+            try
+            {
+                insideImagePath = DocumentSettings.UploadFile(createDto.PropertyInsideImage, "BuyerPlace");
+                outsideImagePath = DocumentSettings.UploadFile(createDto.PropertyOutsideImage, "BuyerPlace");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error uploading images: {ex.Message}");
+            }
+
+            var buyer = _mapper.Map<Buyer>(createDto);
+            buyer.PropertyInsideImagePath = insideImagePath;
+            buyer.PropertyOutsideImagePath = outsideImagePath;
+            buyer.DeliveryStationId = createDto.DeliveryStationId;
+            buyer.IsActive = true; 
+            buyer.WalletBalance = 1000;
+
+            try
+            {
+                await _buyerRepo.AddAsync(buyer);
+                await _buyerRepo.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                if (insideImagePath != null) DocumentSettings.DeleteFile(insideImagePath, "BuyerPlace");
+                if (outsideImagePath != null) DocumentSettings.DeleteFile(outsideImagePath, "BuyerPlace");
+                return StatusCode(500, $"Error saving buyer: {ex.Message}");
+            }
+
+            var buyerToReturn = _mapper.Map<BuyerToReturnDto>(buyer);
+
+            return Ok(new { message = "Buyer created successfully", Data = buyerToReturn });
+        }
+
+        [HttpGet("getAllActiveBuyers")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<IEnumerable<BuyerToReturnDto>>> GetAllBuyers()
+        {
+            var buyers = await _buyerRepo.GetAllAsync(b => b.IsActive,b => b.DeliveryStation);
+
+            var buyersToReturn = buyers.Select(b => new BuyerToReturnDto
+            {
+                Id = b.Id,
+                FullName = b.FullName,
+                PhoneNumber = b.PhoneNumber,
+                PropertyName = b.PropertyName,
+                PropertyType = b.PropertyType,
+                PropertyLocation = b.PropertyLocation,
+                PropertyAddress = b.PropertyAddress,
+                PropertyInsideImagePath = b.PropertyInsideImagePath,
+                PropertyOutsideImagePath = b.PropertyOutsideImagePath,
+                IsActive = b.IsActive,
+                WalletBalance = b.WalletBalance,
+                DeviceToken = b.DeviceToken,
+                DeliveryStation = b.DeliveryStation != null ? b.DeliveryStation.Name : null,
+            }).ToList();
+
+            return Ok(buyersToReturn);
+        }
+        [HttpGet("getBuyerById/{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<BuyerToReturnDto>> GetBuyerById(int id)
+        {
+            var buyer = await _buyerRepo.GetFirstOrDefaultAsync(d=>d.Id == id , d=>d.DeliveryStation);
+            if (buyer == null)
+                return NotFound("Buyer not found.");
+
+            var buyersToReturn =  new BuyerToReturnDto
+            {
+                Id = buyer.Id,
+                FullName = buyer.FullName,
+                PhoneNumber = buyer.PhoneNumber,
+                PropertyName = buyer.PropertyName,
+                PropertyType = buyer.PropertyType,
+                PropertyLocation = buyer.PropertyLocation,
+                PropertyAddress = buyer.PropertyAddress,
+                PropertyInsideImagePath = buyer.PropertyInsideImagePath,
+                PropertyOutsideImagePath = buyer.PropertyOutsideImagePath,
+                IsActive = buyer.IsActive,
+                WalletBalance = buyer.WalletBalance,
+                DeviceToken = buyer.DeviceToken,
+                DeliveryStation = buyer.DeliveryStation != null ? buyer.DeliveryStation.Name : null,
+            };
+
+            return Ok(buyersToReturn);
+        }
+        [HttpPut("updateBuyer/{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult> UpdateBuyer(int id, [FromForm] RegisterBuyerDto updateDto)
+        {
+            var buyer = await _buyerRepo.GetByIdAsync(id);
+            if (buyer == null)
+                return NotFound("Buyer not found.");
+
+            buyer.FullName = updateDto.FullName;
+            buyer.PhoneNumber = updateDto.PhoneNumber;
+            buyer.PropertyName = updateDto.PropertyName;
+            buyer.PropertyType = updateDto.PropertyType;
+            buyer.PropertyLocation = updateDto.PropertyLocation;
+            buyer.PropertyAddress = updateDto.PropertyAddress;
+            buyer.DeliveryStationId = updateDto.DeliveryStationId;
+
+            if (updateDto.PropertyInsideImage != null)
+            {
+                DocumentSettings.DeleteFile(buyer.PropertyInsideImagePath, "BuyerPlace");
+                buyer.PropertyInsideImagePath = DocumentSettings.UploadFile(updateDto.PropertyInsideImage, "BuyerPlace");
+            }
+
+            if (updateDto.PropertyOutsideImage != null)
+            {
+                DocumentSettings.DeleteFile(buyer.PropertyOutsideImagePath, "BuyerPlace");
+                buyer.PropertyOutsideImagePath = DocumentSettings.UploadFile(updateDto.PropertyOutsideImage, "BuyerPlace");
+            }
+
+            _buyerRepo.Update(buyer);
+            await _buyerRepo.SaveChangesAsync();
+
+            
+
+            return Ok(new { message = "Buyer updated successfully" });
+        }
+        [HttpDelete("deleteBuyer/{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult> DeleteBuyer(int id)
+        {
+            var buyer = await _buyerRepo.GetByIdAsync(id);
+            if (buyer == null)
+                return NotFound("Buyer not found.");
+
+            DocumentSettings.DeleteFile(buyer.PropertyInsideImagePath, "BuyerPlace");
+            DocumentSettings.DeleteFile(buyer.PropertyOutsideImagePath, "BuyerPlace");
+
+            _buyerRepo.Delete(buyer);
+            await _buyerRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Buyer deleted successfully" });
+        }
+
+
+
         [HttpGet("getInactiveBuyers")]
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<PagedResult<BuyerToReturnDto>>> GetInactiveBuyers(int page = 1, int pageSize = 10)
@@ -440,6 +595,57 @@ namespace Order.API.Controllers
 
 
         #region Supplier
+        [HttpPost("addSupplier")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<SupplierToReturnDto>> AddSupplier([FromForm] RegisterSupplierDto registerDto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            try
+            {
+                if (!Enum.TryParse<SupplierType>(registerDto.SupplierType, true, out _))
+                    return BadRequest("Invalid SupplierType. Must be one of: Wholesale, BulkWholesale, Manufacturer, RestaurantCafeSupplier");
+            }
+            catch
+            {
+                return BadRequest("Invalid SupplierType format.");
+            }
+
+            var existingSupplier = await _supplierRepo.GetFirstOrDefaultAsync(b => b.PhoneNumber == registerDto.PhoneNumber);
+            if (existingSupplier != null)
+                return BadRequest("Phone number already exists.");
+
+            string? warehouseImageUrl = null;
+            try
+            {
+                warehouseImageUrl = DocumentSettings.UploadFile(registerDto.WarehouseImage, "SupplierWarehouse");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error uploading images: {ex.Message}");
+            }
+
+            var supplier = _mapper.Map<Supplier>(registerDto);
+            supplier.WarehouseImageUrl = warehouseImageUrl;
+            supplier.IsActive = true;
+
+            try
+            {
+                await _supplierRepo.AddAsync(supplier);
+                await _supplierRepo.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                if (warehouseImageUrl != null) DocumentSettings.DeleteFile(warehouseImageUrl, "SupplierWarehouse");
+                return StatusCode(500, $"Error saving supplier: {ex.Message}");
+            }
+
+            var supplierToReturn = _mapper.Map<SupplierToReturnDto>(supplier);
+            return Ok(new { message = "Supplier Added Successfully", Data = supplierToReturn });
+        }
+
+
         [HttpPut("updateSupplier/{id}")]
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<SupplierToReturnDto>> UpdateSupplier(int id, [FromForm] UpdateSupplierDto updateDto)
@@ -581,7 +787,8 @@ namespace Order.API.Controllers
                     MinimumOrderPrice = 0,
                     MinimumOrderItems = s.MinimumOrderItems,
                     DeliveryDays = s.DeliveryDays,
-                    WalletBalance = s.WalletBalance
+                    WalletBalance = s.WalletBalance,
+                    IsActive = s.IsActive
                 }).ToList();
 
                 var totalItems = mappedSuppliers.Count();
@@ -607,6 +814,148 @@ namespace Order.API.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error retrieving suppliers: {ex.Message}");
+            }
+        }
+
+        [HttpGet("getActiveSuppliers")]
+        [Authorize]
+        public async Task<ActionResult<PagedResponseDto<SupplierDto>>> GetActiveSuppliers(
+        int page = 1,
+        int pageSize = 10,
+        string? name = null)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            if (page < 1 || pageSize < 1)
+                return BadRequest(new { message = "Page number and page size must be greater than zero" });
+
+            try
+            {
+                var suppliers = _supplierRepo.GetAllQueryable(s => s.IsActive == true);
+
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    suppliers = suppliers.Where(s => s.Name.Contains(name) || s.CommercialName.Contains(name));
+                }
+
+                var result = await suppliers.ToListAsync();
+
+
+                var mappedSuppliers = suppliers.Select(s => new SupplierDto
+                {
+                    Id = s.Id,
+                    Name = s.Name,
+                    Email = s.Email,
+                    CommercialName = s.CommercialName,
+                    PhoneNumber = s.PhoneNumber,
+                    SupplierType = s.SupplierType.ToString(),
+                    WarehouseLocation = s.WarehouseLocation,
+                    WarehouseAddress = s.WarehouseAddress,
+                    WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{s.WarehouseImageUrl}",
+                    DeliveryMethod = s.DeliveryMethod,
+                    ProfitPercentage = s.ProfitPercentage,
+                    MinimumOrderPrice = 0,
+                    MinimumOrderItems = s.MinimumOrderItems,
+                    DeliveryDays = s.DeliveryDays,
+                    WalletBalance = s.WalletBalance,
+                    IsActive = s.IsActive
+                }).ToList();
+
+                var totalItems = mappedSuppliers.Count;
+                var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+
+                var pagedSuppliers = mappedSuppliers
+                    .OrderBy(i => i.Id)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                var response = new PagedResponseDto<SupplierDto>
+                {
+                    Items = pagedSuppliers,
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalItems = totalItems,
+                    TotalPages = totalPages
+                };
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving active suppliers: {ex.Message}");
+            }
+        }
+
+        [HttpGet("getInactiveSuppliers")]
+        [Authorize]
+        public async Task<ActionResult<PagedResponseDto<SupplierDto>>> GetInactiveSuppliers(
+        int page = 1,
+        int pageSize = 10,
+        string? name = null)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            if (page < 1 || pageSize < 1)
+                return BadRequest(new { message = "Page number and page size must be greater than zero" });
+
+            try
+            {
+                var suppliers = _supplierRepo.GetAllQueryable(s => s.IsActive == false);
+
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    suppliers = suppliers.Where(s => s.Name.Contains(name) || s.CommercialName.Contains(name));
+                }
+
+                var result = await suppliers.ToListAsync();
+
+
+                var mappedSuppliers = suppliers.Select(s => new SupplierDto
+                {
+                    Id = s.Id,
+                    Name = s.Name,
+                    Email = s.Email,
+                    CommercialName = s.CommercialName,
+                    PhoneNumber = s.PhoneNumber,
+                    SupplierType = s.SupplierType.ToString(),
+                    WarehouseLocation = s.WarehouseLocation,
+                    WarehouseAddress = s.WarehouseAddress,
+                    WarehouseImageUrl = $"{_configuration["BaseApiUrl"]}{s.WarehouseImageUrl}",
+                    DeliveryMethod = s.DeliveryMethod,
+                    ProfitPercentage = s.ProfitPercentage,
+                    MinimumOrderPrice = 0,
+                    MinimumOrderItems = s.MinimumOrderItems,
+                    DeliveryDays = s.DeliveryDays,
+                    WalletBalance = s.WalletBalance,
+                    IsActive = s.IsActive
+                }).ToList();
+
+                var totalItems = mappedSuppliers.Count;
+                var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+
+                var pagedSuppliers = mappedSuppliers
+                    .OrderBy(i => i.Id)
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                var response = new PagedResponseDto<SupplierDto>
+                {
+                    Items = pagedSuppliers,
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalItems = totalItems,
+                    TotalPages = totalPages
+                };
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving inactive suppliers: {ex.Message}");
             }
         }
 
@@ -638,6 +987,42 @@ namespace Order.API.Controllers
             });
         }
 
+        [HttpPut("{id}/deactivate")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> DeactivateSupplier(int id)
+        {
+            var supplier = await _supplierRepo.GetByIdAsync(id);
+            if (supplier == null)
+                return NotFound(new { message = $"Supplier with ID {id} not found." });
+
+            if (!supplier.IsActive)
+                return BadRequest(new { message = "Supplier is already deactivated." });
+
+            supplier.IsActive = false;
+            _supplierRepo.Update(supplier);
+            await _supplierRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Supplier deactivated successfully." });
+        }
+
+        [HttpPut("{id}/activate")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> ActivateSupplier(int id)
+        {
+            var supplier = await _supplierRepo.GetByIdAsync(id);
+            if (supplier == null)
+                return NotFound(new { message = $"Supplier with ID {id} not found." });
+
+            if (supplier.IsActive)
+                return BadRequest(new { message = "Supplier is already active." });
+
+            supplier.IsActive = true;
+            _supplierRepo.Update(supplier);
+            await _supplierRepo.SaveChangesAsync();
+
+            return Ok(new { message = "Supplier activated successfully." });
+        }
+
 
         #endregion
 
@@ -646,6 +1031,7 @@ namespace Order.API.Controllers
         public async Task<IActionResult> GetSupplierOrders(
         [FromQuery] string? orderStatus,
         [FromQuery] string? buyerName,
+        [FromQuery] string? buyerPhone,   
         [FromQuery] string? supplierType,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 10)
@@ -676,6 +1062,7 @@ namespace Order.API.Controllers
                 Expression<Func<SupplierOrder, bool>>? filter = o =>
                     (!statusFilter.HasValue || o.Status == statusFilter.Value) &&
                     (string.IsNullOrWhiteSpace(buyerName) || o.BuyerName.Contains(buyerName)) &&
+                    (string.IsNullOrWhiteSpace(buyerPhone) || o.BuyerPhone.Contains(buyerPhone)) && 
                     (!supplierTypeFilter.HasValue || o.Supplier.SupplierType == supplierTypeFilter.Value);
 
                 var orders = await _supplierOrderRepo.GetAllAsync(
@@ -737,6 +1124,7 @@ namespace Order.API.Controllers
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
+
 
 
 

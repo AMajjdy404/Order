@@ -17,6 +17,7 @@
         public int MinimumOrderItems { get; set; }
         public int DeliveryDays { get; set; }
         public decimal? WalletBalance { get; set; }
+        public bool IsActive { get; set; } 
 
         // Rating
         public double? AverageRating { get; set; } = 0;
